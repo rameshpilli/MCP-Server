@@ -1,124 +1,149 @@
-# MCP (Model Control Platform)
+# Model Control Platform (MCP)
 
-A flexible and enterprise-ready system for managing and monitoring multiple LLM models in a corporate environment.
+A centralized platform for managing, registering, and controlling AI models across your organization.
 
-## Features
+## 🗺️ Quick Navigation
 
-- 🚀 Multi-model support with unified API
-- 📊 Comprehensive monitoring and observability
-- 🔐 Enterprise-grade security
-- 🔄 Automatic failover and load balancing
-- 📝 Detailed logging and analytics
-- ☁️ Azure integration (optional)
-- 🗄️ Multiple database backend support
+| If you want to... | Go to... | Description |
+|-------------------|----------|-------------|
+| 📦 Install MCP Client | [Installation Guide](USAGE.md#installation) | Set up the client package |
+| 🔑 Register a Model | [Model Registration](USAGE.md#using-pip-package-recommended) | Register models via CLI, SDK, or API |
+| 🛠️ Configure Settings | [Configuration Reference](USAGE.md#configuration-reference) | Learn about all config options |
+| 🔍 View Examples | [Examples](USAGE.md#examples) | See example implementations |
+| 🐛 Troubleshoot | [Troubleshooting](USAGE.md#troubleshooting) | Common issues and solutions |
 
-## Quick Start
+## 🏗️ Architecture Overview
 
-1. Clone the repository:
-```bash
-git clone https://github.com/yourusername/MCP.git
-cd MCP
+```mermaid
+graph TD
+    A[Client Applications] -->|MCP Client| B[MCP Server]
+    B -->|Authentication| C[Azure AD/SSO]
+    B -->|Model Storage| D[PostgreSQL]
+    B -->|File Storage| E[Azure Blob/S3]
+    B -->|Caching| F[Redis]
+    B -->|Monitoring| G[Prometheus/Grafana]
 ```
 
-2. Create and activate virtual environment:
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+## 💾 Data Storage
+
+- **Default**: Local PostgreSQL database for development
+- **Production**: 
+  - Azure Database for PostgreSQL
+  - Azure Blob Storage/S3 for model artifacts
+  - Redis for caching and rate limiting
+
+## 🔐 Security & Access
+
+1. **Authentication**:
+   - Azure AD integration
+   - API key-based access
+   - Role-based access control (RBAC)
+
+2. **Data Access**:
+   - Centralized access control
+   - Audit logging
+   - Encryption at rest and in transit
+
+## 🌐 Centralized Management
+
+The MCP server acts as a single source of truth for:
+- Model registrations
+- Access permissions
+- Model metadata
+- Usage statistics
+- Resource allocation
+
+## 📊 Storage Flow
+
+1. **Model Registration**:
+   ```
+   Client -> MCP Server -> PostgreSQL (metadata)
+                       -> S3/Blob (artifacts)
+   ```
+
+2. **Model Access**:
+   ```
+   Client -> MCP Server -> Redis (cache check)
+                       -> PostgreSQL (if not cached)
+                       -> S3/Blob (if artifacts needed)
+   ```
+
+## 🚀 Getting Started
+
+1. **Install the client**:
+   ```bash
+   pip install mcp-client
+   ```
+
+2. **Configure your environment**:
+   ```bash
+   export MCP_SERVER_URL="https://mcp.yourorg.com"
+   export MCP_API_KEY="your-api-key"
+   ```
+
+3. **Register your first model**:
+   ```bash
+   mcp register model_config.yaml
+   ```
+
+## 📝 Configuration Examples
+
+### Local Development
+```yaml
+storage:
+  type: local
+  database_url: postgresql://localhost:5432/mcp
+  artifacts_path: ./storage/models
 ```
 
-3. Install dependencies:
-```bash
-pip install -r requirements.txt
+### Production
+```yaml
+storage:
+  type: cloud
+  database_url: ${AZURE_POSTGRES_URL}
+  blob_storage:
+    provider: azure
+    container: model-artifacts
+    connection_string: ${AZURE_STORAGE_CONNECTION_STRING}
 ```
 
-4. Set up environment variables:
-```bash
-cp .env.example .env
-# Edit .env with your configuration
-```
+## 🔄 Workflow
 
-5. Initialize database:
-```bash
-alembic upgrade head
-```
+1. **Model Registration**:
+   - Model metadata stored in PostgreSQL
+   - Model artifacts stored in blob storage
+   - Access permissions configured
+   - Health check performed
 
-6. Start the service:
-```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8000
-```
+2. **Model Access**:
+   - Authentication verified
+   - Permissions checked
+   - Cache consulted
+   - Access logged
 
-## Documentation
+3. **Monitoring**:
+   - Usage metrics collected
+   - Performance monitored
+   - Alerts configured
 
-Detailed documentation is available in the `docs/` directory:
+## 📚 Additional Resources
 
-- [Setup and Configuration](docs/setup_and_configuration.md)
-- [API Reference](docs/api_reference.md)
-- [Monitoring Guide](docs/monitoring.md)
-- [Azure Integration](docs/azure_integration.md)
+- [Detailed Documentation](USAGE.md)
+- [API Reference](docs/api.md)
+- [Security Guide](docs/security.md)
+- [Best Practices](docs/best-practices.md)
 
-## Architecture
+## 🤝 Support
 
-```
-app/
-├── core/           # Core functionality
-│   ├── config.py   # Configuration management
-│   ├── database.py # Database operations
-│   └── monitoring.py # Monitoring system
-├── models/         # Model definitions
-├── api/           # API endpoints
-└── utils/         # Utility functions
-```
+For issues and support:
+- Create an issue in the repository
+- Contact MCP support team
+- Join our Slack channel
 
-## Configuration
+## 🔜 Roadmap
 
-The system can be configured using environment variables or configuration files. Key configuration options:
-
-```bash
-# Storage Backend
-STORAGE_BACKEND=local  # or 'azure'
-
-# Database
-AZURE_DB_URL=your-connection-string  # For Azure SQL
-
-# Monitoring
-APPINSIGHTS_CONNECTION_STRING=your-connection-string
-MAX_ERROR_RATE=0.05
-MAX_LATENCY_MS=1000
-```
-
-See [Configuration Guide](docs/setup_and_configuration.md) for more details.
-
-## Development
-
-1. Create a new branch:
-```bash
-git checkout -b feature/your-feature
-```
-
-2. Make your changes and run tests:
-```bash
-pytest tests/
-```
-
-3. Submit a pull request
-
-## Contributing
-
-Contributions are welcome! Please read our [Contributing Guide](CONTRIBUTING.md) for details on our code of conduct and the process for submitting pull requests.
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Support
-
-For support and questions:
-- Create an issue
-- Contact the development team
-- Check the documentation
-
-## Acknowledgments
-
-- Built with FastAPI and SQLAlchemy
-- Monitoring powered by OpenTelemetry
-- Azure integration using official Azure SDKs 
+- [ ] Multi-region support
+- [ ] Model versioning
+- [ ] A/B testing framework
+- [ ] Automated scaling
+- [ ] Model performance analytics 
