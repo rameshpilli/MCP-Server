@@ -1,0 +1,89 @@
+# Model Configuration Example
+#
+# Usage Instructions:
+# -----------------
+#
+# 1. Using pip package (Recommended):
+#    ```bash
+#    # Install MCP client
+#    pip install mcp-client
+#
+#    # Register model using CLI
+#    mcp register model_config.yaml --server-url http://mcp-server:8000 --api-key your-api-key
+#
+#    # List registered models
+#    mcp list-models
+#
+#    # Get model statistics
+#    mcp get-stats my-custom-model
+#    ```
+#
+# 2. Using Python SDK:
+#    ```python
+#    from mcp_client import MCPClient, ModelConfig, ModelBackend
+#    import asyncio
+#
+#    async def register_model():
+#        # Initialize client
+#        client = MCPClient(
+#            base_url="http://mcp-server:8000",
+#            api_key="your-api-key"
+#        )
+#        
+#        # Create model config
+#        config = ModelConfig(
+#            model_id="my-custom-model",
+#            backend=ModelBackend.CUSTOM,
+#            api_base="http://my-model:8000",
+#            additional_params={
+#                "model_type": "text-generation",
+#                "team": "nlp-research"
+#            }
+#        )
+#        
+#        # Register model
+#        try:
+#            response = await client.register_model(config)
+#            print(f"Model registered: {response}")
+#        finally:
+#            await client.close()
+#
+#    asyncio.run(register_model())
+#    ```
+#
+# 3. Using REST API directly:
+#    ```bash
+#    curl -X POST http://mcp-server:8000/models/register \
+#      -H "Authorization: Bearer your-api-key" \
+#      -H "Content-Type: application/json" \
+#      -d '{
+#        "model_id": "my-custom-model",
+#        "backend": "custom",
+#        "api_base": "http://my-model:8000",
+#        "api_version": "v1"
+#      }'
+#    ```
+#
+# Model Configuration:
+# ------------------
+model_id: custom-text-model
+backend: custom
+api_base: http://model-service:8000
+api_version: v1
+timeout: 30
+max_tokens: 2000
+temperature: 0.7
+additional_params:
+  model_type: text-generation
+  description: Custom text generation model
+  version: 1.0.0
+  team: nlp-research
+  environment: production
+  resources:
+    gpu: true
+    memory: 16G
+    cpu_cores: 4
+  monitoring:
+    enable_logging: true
+    log_level: info
+    metrics_endpoint: /metrics 
