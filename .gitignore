@@ -1,0 +1,88 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.project
+.pydevproject
+.settings/
+
+# Database
+*.db
+*.sqlite3
+*.sqlite
+mcp.db*
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Azure
+.azure/
+*.publishsettings
+*.azurePubxml
+*.pubxml
+*.publishproj
+
+# Testing
+.coverage
+htmlcov/
+.tox/
+.nox/
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Alembic
+alembic.ini.sample
+
+# Local development
+.local/
+local_settings.py
+instance/
+
+# Secrets and configurations
+*.env
+.env.*
+secrets.yaml
+config.local.yaml
+azure_credentials.json
+
+# System
+.DS_Store
+Thumbs.db 

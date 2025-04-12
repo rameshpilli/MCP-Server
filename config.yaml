@@ -1,0 +1,63 @@
+server:
+  host: "0.0.0.0"
+  port: 8000
+  api_key: "test_key"
+  debug: true
+
+storage:
+  default: "azure"
+  azure:
+    type: "azure"
+    connection_string: "your-connection-string"
+    container: "gold"
+    data_mappings:
+      jobs_data: "/data/jobs/daily_stats.parquet"
+      employee_data: "/data/hr/employees.parquet"
+      sales_data: "/data/sales/*.parquet"
+
+rate_limits:
+  requests_per_minute: 60
+  burst_size: 10
+
+cache:
+  enabled: true
+  ttl_seconds: 300  # 5 minutes
+  max_size_mb: 100
+
+logging:
+  level: "INFO"
+  file: "mcp_server.log"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+security:
+  max_file_size_mb: 100
+  allowed_extensions:
+    - ".txt"
+    - ".log"
+    - ".json"
+    - ".yaml"
+    - ".yml"
+    - ".md"
+    - ".csv"
+    - ".py"
+    - ".js"
+    - ".html"
+    - ".css"
+    - ".xml"
+    - ".ini"
+    - ".conf"
+
+metadata:
+  data_descriptions:
+    jobs_data:
+      description: "Daily statistics about job postings"
+      update_frequency: "daily"
+      schema:
+        - name: "job_id"
+          type: "string"
+        - name: "posting_date"
+          type: "date"
+        - name: "department"
+          type: "string"
+        - name: "status"
+          type: "string" 
