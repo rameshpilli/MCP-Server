@@ -20,11 +20,13 @@ import pandas as pd
 import csv
 from functools import lru_cache
 from tenacity import retry, stop_after_attempt, wait_exponential
+from app.core.config import ServerConfig
+from app.core.auth import api_key_manager, APIKey
 
 # Configure logging with more detail
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - [%(client_ip)s] - %(message)s',
+    level=getattr(logging, ServerConfig.LOG_LEVEL),
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
         logging.FileHandler('mcp_server.log')
@@ -50,12 +52,12 @@ limiter = Limiter(key_func=get_remote_address)
 # Initialize cache
 api_cache = TTLCache(maxsize=100, ttl=ServerConfig.CACHE_TTL)
 
-# API Key security
+# Initialize API key security
 api_key_header = APIKeyHeader(name="X-API-Key")
 
 app = FastAPI(
     title="MCP Server",
-    description="A feature-rich Master Control Program server for file operations and real-time data",
+    description="Model Control Platform for managing AI models",
     version="1.0.0"
 )
 
@@ -85,14 +87,23 @@ class TaskResponse(BaseModel):
     timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
     cached: bool = False
 
-async def verify_api_key(api_key: str = Header(..., alias="X-API-Key")):
-    """Verify the API key."""
-    if api_key not in ServerConfig.API_KEYS:
+class ModelRequest(BaseModel):
+    model_id: str
+    config: Dict[str, Any]
+
+class APIKeyRequest(BaseModel):
+    owner: str
+    expires_in_days: Optional[int] = 90
+    permissions: Optional[set[str]] = None
+
+async def verify_api_key(api_key: str = Depends(api_key_header)) -> APIKey:
+    """Verify the API key and return key info."""
+    if not api_key_manager.validate_key(api_key):
         raise HTTPException(
-            status_code=403,
-            detail="Invalid API key"
+            status_code=401,
+            detail="Invalid or expired API key"
         )
-    return api_key
+    return api_key_manager.get_key_info(api_key)
 
 def validate_file_path(file_path: str) -> Path:
     """Validate and normalize file path within data directory."""
@@ -233,7 +244,7 @@ async def root():
 
 @app.post("/execute-task", response_model=TaskResponse)
 @limiter.limit(ServerConfig.RATE_LIMIT)
-async def execute_task(request: Request, task: TaskRequest, api_key: str = Depends(verify_api_key)):
+async def execute_task(request: Request, task: TaskRequest, api_key: APIKey = Depends(verify_api_key)):
     client_ip = request.client.host
     logger.info(
         f"Received task request - Type: {task.task_type}",
@@ -800,7 +811,74 @@ async def handle_get_activity() -> TaskResponse:
             detail=f"All activity sources failed, including local fallback. Errors: {'; '.join(errors)}"
         )
 
+@app.post("/api/keys")
+async def create_api_key(request: APIKeyRequest):
+    """Create a new API key."""
+    try:
+        expires_in = timedelta(days=request.expires_in_days) if request.expires_in_days else None
+        api_key = api_key_manager.generate_key(
+            owner=request.owner,
+            expires_in=expires_in,
+            permissions=request.permissions
+        )
+        return {
+            "key": api_key.key,
+            "expires_at": api_key.expires_at,
+            "message": "Store this key securely. It won't be shown again."
+        }
+    except Exception as e:
+        logger.error(f"Error creating API key: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/keys/info")
+async def get_key_info(api_key: APIKey = Depends(verify_api_key)):
+    """Get information about the current API key."""
+    return {
+        "owner": api_key.owner,
+        "created_at": api_key.created_at,
+        "expires_at": api_key.expires_at,
+        "is_active": api_key.is_active,
+        "permissions": list(api_key.permissions),
+        "last_used": api_key.last_used,
+        "usage_count": api_key.usage_count
+    }
+
+@app.post("/models/register")
+async def register_model(
+    request: ModelRequest,
+    api_key: APIKey = Depends(verify_api_key)
+):
+    """Register a new model with MCP."""
+    try:
+        # Process model registration
+        logger.info(f"Registering model: {request.model_id}")
+        # Add your model registration logic here
+        return {"status": "success", "message": f"Model {request.model_id} registered"}
+    except Exception as e:
+        logger.error(f"Error registering model: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/models/{model_id}/status")
+async def get_model_status(
+    model_id: str,
+    api_key: APIKey = Depends(verify_api_key)
+):
+    """Get the status of a registered model."""
+    try:
+        # Get model status
+        logger.info(f"Getting status for model: {model_id}")
+        # Add your status check logic here
+        return {"status": "active", "model_id": model_id}
+    except Exception as e:
+        logger.error(f"Error getting model status: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/health")
+async def health_check():
+    """Simple health check endpoint."""
+    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+
 if __name__ == "__main__":
-    logger.info("Starting MCP Server...", extra={"client_ip": "system"})
+    logger.info("Starting MCP Server...")
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+    uvicorn.run(app, host=ServerConfig.HOST, port=ServerConfig.PORT, log_level="info")

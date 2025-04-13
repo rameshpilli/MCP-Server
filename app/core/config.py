@@ -109,53 +109,15 @@ class ModelConfig:
         return model
 
 class ServerConfig:
-    """Server configuration settings.
+    """Server configuration settings."""
     
-    This class centralizes all server configuration settings including:
-    - File storage settings (directory, size limits, allowed types)
-    - Pagination settings
-    - Upload configurations
-    - API and security settings
-    - Server runtime configurations
-    - LLM Integration settings
-    
-    Flow:
-    1. UI/Client sends request to MCP
-    2. MCP looks up appropriate model from registered models
-    3. MCP forwards request to model's API endpoint
-    4. Response is returned to client
-    5. Usage statistics are updated and logged
-    
-    Example:
-    ```python
-    from app.core.config import ServerConfig, ModelConfig, ModelBackend
-    
-    # Register custom model
-    custom_model = ModelConfig(
-        model_id="custom-model-v1",
-        backend=ModelBackend.CUSTOM,
-        api_base="http://internal-llm-cluster:8000",
-        api_version="v2",
-        timeout=60
-    )
-    
-    # Add model to configuration and database
-    await ServerConfig.register_model(custom_model)
-    
-    # Use model in your application
-    async with ServerConfig.get_model("custom-model-v1") as model:
-        response = await model.generate(prompt="Your prompt here")
-        # Usage stats are automatically updated and logged
-    ```
-    """
-    
-    # Base directory for file operations
+    # Base configuration
     BASE_DIR: Path = Path(__file__).parent.parent.parent / "storage"
-    
-    # Maximum file size (100 MB)
-    MAX_FILE_SIZE: int = 100 * 1024 * 1024
-    
-    # Allowed file extensions
+    MAX_FILE_SIZE: int = 100 * 1024 * 1024  # 100MB
+    ITEMS_PER_PAGE: int = 50
+    UPLOAD_CHUNK_SIZE: int = 1024 * 1024  # 1MB
+
+    # File extensions
     ALLOWED_EXTENSIONS: Set[str] = {
         # Documents
         'txt', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
@@ -164,190 +126,47 @@ class ServerConfig:
         # Archives
         'zip', 'tar', 'gz',
         # Code
-        'py', 'js', 'html', 'css', 'json', 'xml',
+        'py', 'js', 'html', 'css', 'json', 'xml', 'yaml', 'yml'
     }
-    
-    # Maximum items per page for directory listing
-    ITEMS_PER_PAGE: int = 50
-    
-    # Chunk size for file uploads (1 MB)
-    UPLOAD_CHUNK_SIZE: int = 1024 * 1024
 
-    # Security and API settings
-    API_KEYS = {"test_key", "dev_key"}  # Sample API keys
-    CACHE_TTL = 300  # Cache TTL in seconds (5 minutes)
-    RATE_LIMIT = "20/minute"  # Rate limit per IP
-    
+    # Security settings
+    API_KEYS: Set[str] = set(os.getenv('API_KEYS', 'test_key,dev_key').split(','))
+    RATE_LIMIT: str = os.getenv('RATE_LIMIT', '20/minute')
+
+    # Cache settings
+    CACHE_TTL: int = int(os.getenv('CACHE_TTL', '300'))  # 5 minutes
+    CACHE_MAX_SIZE: int = int(os.getenv('CACHE_MAX_SIZE', '100'))  # 100 items
+
     # Server settings
-    PORT = int(os.getenv('PORT', 8000))
-    HOST = os.getenv('HOST', '0.0.0.0')
+    PORT: int = int(os.getenv('PORT', '8000'))
+    HOST: str = os.getenv('HOST', '0.0.0.0')
+    DEBUG: bool = os.getenv('DEBUG', 'false').lower() == 'true'
 
-    # LLM Integration Settings
-    _registered_models: Dict[str, ModelConfig] = {}
-    DEFAULT_MODEL_ID: str = os.getenv('DEFAULT_MODEL_ID', 'default-model')
-    LLM_REQUEST_TIMEOUT: int = int(os.getenv('LLM_REQUEST_TIMEOUT', '30'))
-    LLM_RATE_LIMIT: str = os.getenv('LLM_RATE_LIMIT', '60/minute')
-    LLM_CONCURRENT_REQUESTS: int = int(os.getenv('LLM_CONCURRENT_REQUESTS', '5'))
+    # Storage settings
+    STORAGE_TYPE: str = os.getenv('STORAGE_TYPE', 'local')
+    DATABASE_URL: str = os.getenv('DATABASE_URL', 'postgresql://localhost:5432/mcp')
     
-    @classmethod
-    async def register_model(cls, model_config: ModelConfig) -> None:
-        """Register a new model configuration and save to database.
-        
-        Args:
-            model_config: Configuration for the model to register
-            
-        Raises:
-            ValueError: If a model with the same ID is already registered
-        """
-        if model_config.model_id in cls._registered_models:
-            raise ValueError(f"Model {model_config.model_id} is already registered")
-        
-        # Create database record
-        model_record = ModelRecord(
-            **model_config.to_dict()
-        )
-        
-        # Save to database
-        async with db.get_session() as session:
-            session.add(model_record)
-            await session.commit()
-        
-        # Add to in-memory registry
-        cls._registered_models[model_config.model_id] = model_config
-        
-        # Log registration to Azure if configured
-        await db.log_to_azure(
-            model_config.to_dict(),
-            "model_registrations"
-        )
+    # Cloud storage (if applicable)
+    AZURE_STORAGE_CONNECTION: str = os.getenv('AZURE_STORAGE_CONNECTION')
+    S3_BUCKET: str = os.getenv('S3_BUCKET')
     
-    @classmethod
-    async def update_model_stats(
-        cls,
-        model_id: str,
-        success: bool,
-        tokens: int,
-        latency: float,
-        error_message: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None
-    ) -> None:
-        """Update model usage statistics and log to database.
-        
-        Args:
-            model_id: ID of the model to update
-            success: Whether the request was successful
-            tokens: Number of tokens used
-            latency: Request latency in seconds
-            error_message: Optional error message if request failed
-            metadata: Optional request metadata
-        """
-        # Update in-memory stats
-        model = cls._registered_models.get(model_id)
-        if model:
-            model.usage_stats.update(success, tokens, latency)
-        
-        # Create usage log record
-        usage_log = ModelUsageLog(
-            model_id=model_id,
-            success=success,
-            tokens_used=tokens,
-            latency=latency,
-            error_message=error_message,
-            request_metadata=metadata
-        )
-        
-        # Save to database
-        async with db.get_session() as session:
-            # Update model record
-            model_record = await session.get(ModelRecord, model_id)
-            if model_record:
-                model_record.total_requests += 1
-                model_record.successful_requests += int(success)
-                model_record.failed_requests += int(not success)
-                model_record.total_tokens += tokens
-                model_record.last_used = datetime.utcnow()
-                model_record.average_latency = (
-                    (model_record.average_latency * (model_record.total_requests - 1) + latency)
-                    / model_record.total_requests
-                )
-            
-            # Add usage log
-            session.add(usage_log)
-            await session.commit()
-        
-        # Log to Azure if configured
-        await db.log_to_azure(
-            {
-                "model_id": model_id,
-                "timestamp": datetime.utcnow().isoformat(),
-                "success": success,
-                "tokens": tokens,
-                "latency": latency,
-                "error_message": error_message,
-                "metadata": metadata
-            },
-            "model_usage"
-        )
-    
-    @classmethod
-    async def get_model_stats(cls, model_id: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
-        """Get usage statistics for models.
-        
-        Args:
-            model_id: Optional model ID to get stats for. If None, returns stats for all models.
-            
-        Returns:
-            Dictionary of model statistics
-        """
-        async with db.get_session() as session:
-            query = session.query(ModelRecord)
-            if model_id:
-                query = query.filter(ModelRecord.model_id == model_id)
-            
-            records = await query.all()
-            return {
-                record.model_id: {
-                    "total_requests": record.total_requests,
-                    "successful_requests": record.successful_requests,
-                    "failed_requests": record.failed_requests,
-                    "total_tokens": record.total_tokens,
-                    "last_used": record.last_used,
-                    "average_latency": record.average_latency
-                }
-                for record in records
-            }
+    # Snowflake settings (if enabled)
+    SNOWFLAKE_ENABLED: bool = os.getenv('SNOWFLAKE_ENABLED', 'false').lower() == 'true'
+    SNOWFLAKE_ACCOUNT: str = os.getenv('SNOWFLAKE_ACCOUNT')
+    SNOWFLAKE_WAREHOUSE: str = os.getenv('SNOWFLAKE_WAREHOUSE')
+    SNOWFLAKE_DATABASE: str = os.getenv('SNOWFLAKE_DATABASE')
+    SNOWFLAKE_SCHEMA: str = os.getenv('SNOWFLAKE_SCHEMA')
+    SNOWFLAKE_ROLE: str = os.getenv('SNOWFLAKE_ROLE')
+    SNOWFLAKE_USER: str = os.getenv('SNOWFLAKE_USER')
 
-    @classmethod
-    def get_model(cls, model_id: Optional[str] = None) -> ModelConfig:
-        """Get configuration for a specific model.
-        
-        Args:
-            model_id: ID of the model to retrieve. If None, returns the default model.
-            
-        Returns:
-            ModelConfig for the requested model
-            
-        Raises:
-            KeyError: If the requested model is not registered
-        """
-        model_id = model_id or cls.DEFAULT_MODEL_ID
-        if model_id not in cls._registered_models:
-            raise KeyError(f"Model {model_id} is not registered")
-        return cls._registered_models[model_id]
-    
-    @classmethod
-    def list_models(cls) -> List[str]:
-        """Get a list of all registered model IDs."""
-        return list(cls._registered_models.keys())
+    # Monitoring settings
+    LOG_LEVEL: str = os.getenv('LOG_LEVEL', 'INFO')
+    ENABLE_METRICS: bool = os.getenv('ENABLE_METRICS', 'true').lower() == 'true'
+    METRICS_PORT: int = int(os.getenv('METRICS_PORT', '9090'))
 
     @classmethod
     def validate_config(cls) -> None:
-        """Validate configuration settings and ensure required directories exist.
-        
-        Raises:
-            ValueError: If any configuration values are invalid
-            OSError: If storage directory cannot be created or is not writable
-        """
+        """Validate configuration settings."""
         if cls.MAX_FILE_SIZE <= 0:
             raise ValueError("MAX_FILE_SIZE must be positive")
         
@@ -360,34 +179,20 @@ class ServerConfig:
         if not cls.ALLOWED_EXTENSIONS:
             raise ValueError("ALLOWED_EXTENSIONS cannot be empty")
             
-        if cls.LLM_REQUEST_TIMEOUT <= 0:
-            raise ValueError("LLM_REQUEST_TIMEOUT must be positive")
-            
-        if cls.LLM_CONCURRENT_REQUESTS <= 0:
-            raise ValueError("LLM_CONCURRENT_REQUESTS must be positive")
-            
-        # Ensure storage directory exists and is writable
+        # Create storage directory if it doesn't exist
         os.makedirs(cls.BASE_DIR, exist_ok=True)
-        
-        # Test directory is writable
-        test_file = cls.BASE_DIR / '.write_test'
-        try:
-            test_file.touch()
-            test_file.unlink()
-        except OSError as e:
-            raise OSError(f"Storage directory {cls.BASE_DIR} is not writable: {e}")
 
     @classmethod
     def is_file_allowed(cls, filename: str) -> bool:
         """Check if a file is allowed based on its extension."""
         return '.' in filename and filename.rsplit('.', 1)[1].lower() in cls.ALLOWED_EXTENSIONS
 
+# Validate configuration on module import
+ServerConfig.validate_config()
+
 async def initialize_database():
     """Initialize the database"""
     await db.init_db()
-
-# Validate configuration on module import
-ServerConfig.validate_config()
 
 # Note: Database initialization should be called during application startup
 # Example: await initialize_database() 

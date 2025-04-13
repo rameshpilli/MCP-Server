@@ -10,6 +10,14 @@ from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.resources import Resource
 import os
 from enum import Enum
+from app.core.config import ServerConfig
+import prometheus_client
+import json
+import aiohttp
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from prometheus_client import Counter, Histogram, Gauge
 
 class AlertSeverity(str, Enum):
     INFO = "info"
@@ -46,6 +54,219 @@ class MonitoringConfig:
     TEAMS_WEBHOOK_URL = os.getenv("TEAMS_WEBHOOK_URL")
     SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL")
     EMAIL_RECIPIENTS = os.getenv("ALERT_EMAIL_RECIPIENTS", "").split(",")
+
+logger = logging.getLogger(__name__)
+
+# Prometheus metrics
+REQUEST_COUNT = prometheus_client.Counter(
+    'mcp_request_total',
+    'Total requests processed',
+    ['model_id', 'status']
+)
+
+LATENCY = prometheus_client.Histogram(
+    'mcp_request_latency_seconds',
+    'Request latency in seconds',
+    ['model_id']
+)
+
+TOKEN_USAGE = prometheus_client.Counter(
+    'mcp_token_usage_total',
+    'Total tokens used',
+    ['model_id']
+)
+
+QUERY_DURATION = Histogram('query_duration_seconds', 'Query execution time in seconds')
+QUERY_ERRORS = Counter('query_errors_total', 'Total query errors')
+CACHE_HITS = Counter('cache_hits_total', 'Total cache hits')
+CACHE_MISSES = Counter('cache_misses_total', 'Total cache misses')
+ACTIVE_QUERIES = Gauge('active_queries', 'Number of currently executing queries')
+
+class Alert:
+    severity: str
+    title: str
+    message: str
+    timestamp: datetime
+    metadata: Dict[str, Any]
+
+class AlertManager:
+    def __init__(self, config: Dict[str, Any]):
+        self.config = config
+        self.alert_channels = {
+            "email": self._send_email_alert,
+            "slack": self._send_slack_alert,
+            "pagerduty": self._send_pagerduty_alert
+        }
+        self.logger = logging.getLogger(__name__)
+
+    async def send_alert(self, alert: Alert):
+        """Send alert through configured channels"""
+        channels = self.config.get("alert_channels", ["email"])
+        
+        for channel in channels:
+            if channel in self.alert_channels:
+                try:
+                    await self.alert_channels[channel](alert)
+                except Exception as e:
+                    self.logger.error(f"Failed to send alert via {channel}: {str(e)}")
+
+    async def _send_email_alert(self, alert: Alert):
+        """Send alert via email"""
+        email_config = self.config.get("email", {})
+        if not email_config:
+            return
+
+        msg = MIMEMultipart()
+        msg["From"] = email_config["from"]
+        msg["To"] = email_config["to"]
+        msg["Subject"] = f"[{alert.severity.upper()}] {alert.title}"
+
+        body = f"""
+        Alert: {alert.title}
+        Severity: {alert.severity}
+        Time: {alert.timestamp}
+        
+        {alert.message}
+        
+        Additional Information:
+        {json.dumps(alert.metadata, indent=2)}
+        """
+
+        msg.attach(MIMEText(body, "plain"))
+
+        with smtplib.SMTP(email_config["smtp_host"], email_config["smtp_port"]) as server:
+            if email_config.get("use_tls"):
+                server.starttls()
+            if email_config.get("username"):
+                server.login(email_config["username"], email_config["password"])
+            server.send_message(msg)
+
+    async def _send_slack_alert(self, alert: Alert):
+        """Send alert via Slack"""
+        slack_config = self.config.get("slack", {})
+        if not slack_config or "webhook_url" not in slack_config:
+            return
+
+        message = {
+            "text": f"*[{alert.severity.upper()}] {alert.title}*\n{alert.message}",
+            "attachments": [{
+                "fields": [
+                    {"title": k, "value": str(v), "short": True}
+                    for k, v in alert.metadata.items()
+                ]
+            }]
+        }
+
+        async with aiohttp.ClientSession() as session:
+            await session.post(slack_config["webhook_url"], json=message)
+
+    async def _send_pagerduty_alert(self, alert: Alert):
+        """Send alert via PagerDuty"""
+        pd_config = self.config.get("pagerduty", {})
+        if not pd_config or "api_key" not in pd_config:
+            return
+
+        payload = {
+            "routing_key": pd_config["api_key"],
+            "event_action": "trigger",
+            "payload": {
+                "summary": alert.title,
+                "severity": alert.severity,
+                "source": "MCP",
+                "custom_details": alert.metadata
+            }
+        }
+
+        async with aiohttp.ClientSession() as session:
+            await session.post(
+                "https://events.pagerduty.com/v2/enqueue",
+                json=payload,
+                headers={"Content-Type": "application/json"}
+            )
+
+class MonitoringSystem:
+    def __init__(self, config: Dict[str, Any]):
+        self.config = config
+        self.alert_manager = AlertManager(config)
+        self.thresholds = config.get("thresholds", {
+            "slow_query": 5.0,  # seconds
+            "error_rate": 0.1,  # 10%
+            "cache_miss_rate": 0.4,  # 40%
+            "concurrent_queries": 100
+        })
+
+    async def monitor_query_performance(self, query_stats: Dict[str, Any]):
+        """Monitor query performance and send alerts if needed"""
+        # Track query duration
+        duration = query_stats["execution_time"]
+        QUERY_DURATION.observe(duration)
+
+        if duration > self.thresholds["slow_query"]:
+            await self.alert_manager.send_alert(Alert(
+                severity="warning",
+                title="Slow Query Detected",
+                message=f"Query took {duration:.2f} seconds to execute",
+                timestamp=datetime.utcnow(),
+                metadata=query_stats
+            ))
+
+    async def monitor_error_rates(self, window_minutes: int = 5):
+        """Monitor error rates over time window"""
+        while True:
+            error_rate = QUERY_ERRORS._value / max(QUERY_DURATION._count, 1)
+            
+            if error_rate > self.thresholds["error_rate"]:
+                await self.alert_manager.send_alert(Alert(
+                    severity="error",
+                    title="High Query Error Rate",
+                    message=f"Error rate of {error_rate:.2%} exceeds threshold",
+                    timestamp=datetime.utcnow(),
+                    metadata={"error_rate": error_rate}
+                ))
+            
+            await asyncio.sleep(window_minutes * 60)
+
+    async def monitor_cache_performance(self, window_minutes: int = 5):
+        """Monitor cache hit rates"""
+        while True:
+            total = CACHE_HITS._value + CACHE_MISSES._value
+            if total > 0:
+                miss_rate = CACHE_MISSES._value / total
+                if miss_rate > self.thresholds["cache_miss_rate"]:
+                    await self.alert_manager.send_alert(Alert(
+                        severity="warning",
+                        title="High Cache Miss Rate",
+                        message=f"Cache miss rate of {miss_rate:.2%} exceeds threshold",
+                        timestamp=datetime.utcnow(),
+                        metadata={"miss_rate": miss_rate}
+                    ))
+            
+            await asyncio.sleep(window_minutes * 60)
+
+    async def monitor_concurrent_queries(self):
+        """Monitor number of concurrent queries"""
+        while True:
+            concurrent = ACTIVE_QUERIES._value
+            if concurrent > self.thresholds["concurrent_queries"]:
+                await self.alert_manager.send_alert(Alert(
+                    severity="critical",
+                    title="High Concurrent Query Load",
+                    message=f"Current concurrent queries: {concurrent}",
+                    timestamp=datetime.utcnow(),
+                    metadata={"concurrent_queries": concurrent}
+                ))
+            
+            await asyncio.sleep(60)  # Check every minute
+
+    async def start_monitoring(self):
+        """Start all monitoring tasks"""
+        monitoring_tasks = [
+            self.monitor_error_rates(),
+            self.monitor_cache_performance(),
+            self.monitor_concurrent_queries()
+        ]
+        
+        await asyncio.gather(*monitoring_tasks)
 
 class Monitoring:
     """Centralized monitoring system"""
@@ -203,5 +424,39 @@ class Monitoring:
         """Get current health status of all components"""
         return self._health_status
 
+    @staticmethod
+    async def log_request(
+        model_id: str,
+        success: bool,
+        latency: float,
+        tokens: int,
+        metadata: Dict[str, Any] = None
+    ):
+        """Log a model request with metrics."""
+        status = "success" if success else "failure"
+        
+        # Update Prometheus metrics
+        REQUEST_COUNT.labels(model_id=model_id, status=status).inc()
+        LATENCY.labels(model_id=model_id).observe(latency)
+        TOKEN_USAGE.labels(model_id=model_id).inc(tokens)
+        
+        # Log to file
+        logger.info(
+            f"Model request - ID: {model_id}, Status: {status}, "
+            f"Latency: {latency:.3f}s, Tokens: {tokens}",
+            extra={"metadata": metadata}
+        )
+
+    @staticmethod
+    def start_metrics_server():
+        """Start the Prometheus metrics server if enabled."""
+        if ServerConfig.ENABLE_METRICS:
+            prometheus_client.start_http_server(ServerConfig.METRICS_PORT)
+            logger.info(f"Metrics server started on port {ServerConfig.METRICS_PORT}")
+
 # Global monitoring instance
-monitoring = Monitoring() 
+monitoring = Monitoring()
+
+# Start metrics server on module import if enabled
+if ServerConfig.ENABLE_METRICS:
+    Monitoring.start_metrics_server() 
