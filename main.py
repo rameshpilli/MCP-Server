@@ -922,16 +922,64 @@ async def startup_event():
     )
 
 def main():
-    """Main entry point for running the application directly."""
-    parser = argparse.ArgumentParser(description="Run the MCP application server")
-    parser.add_argument("--host", default=settings.HOST, help="Host to bind to")
-    parser.add_argument("--port", type=int, default=settings.PORT, help="Port to bind to")
-    parser.add_argument("--reload", action="store_true", default=settings.RELOAD, help="Enable auto-reload")
-    parser.add_argument("--workers", type=int, default=settings.WORKERS, help="Number of worker processes")
-    parser.add_argument("--debug", action="store_true", default=settings.DEBUG, help="Enable debug mode")
-    
+    """Main entry point for the application"""
+    parser = argparse.ArgumentParser(
+        description="Run the MCP application server"
+    )
+    parser.add_argument(
+        "--host",
+        type=str,
+        default=settings.HOST,
+        help="Host to bind to"
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=settings.PORT,
+        help="Port to bind to"
+    )
+    parser.add_argument(
+        "--reload",
+        action="store_true",
+        default=settings.RELOAD,
+        help="Enable auto-reload"
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=settings.WORKERS,
+        help="Number of worker processes"
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        default=settings.DEBUG,
+        help="Enable debug mode"
+    )
+
     args = parser.parse_args()
-    
+
+    # Check if port is available
+    import socket
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind((args.host, args.port))
+        sock.close()
+    except socket.error:
+        # Port is in use, find next available port
+        port = args.port + 1
+        while port < 65535:
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.bind((args.host, port))
+                sock.close()
+                print(f"Port {args.port} is in use. Using port {port} instead.")
+                args.port = port
+                break
+            except socket.error:
+                port += 1
+                continue
+
     import uvicorn
     uvicorn.run(
         "main:app",

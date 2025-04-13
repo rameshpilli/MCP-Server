@@ -49,6 +49,9 @@ cp .env.example .env
 4. Run the application:
 ```bash
 uvicorn main:app --reload
+# python main.py
+# python main.py --port 8001
+# python main.py --host 127.0.0.1 --port 8000 --reload --debug --workers 4
 ```
 
 ## API Documentation

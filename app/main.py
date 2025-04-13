@@ -60,19 +60,41 @@ if not index_html.exists():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events"""
-    # Initialize database
-    await init_db()
-    
-    # Run startup checks
-    checks = await startup_validator.run_all_checks()
-    if not all(checks.values()):
-        logger.error("Startup checks failed", checks=checks)
-        # You might want to exit here depending on your requirements
-    
-    yield
-    
-    # Cleanup
-    logger.info("Shutting down application")
+    try:
+        # Initialize database
+        logger.info("Initializing database...")
+        await init_db()
+        
+        # Run startup validation
+        logger.info("Running startup validation...")
+        validator = StartupValidator(settings)
+        results = await validator.run_all_checks()
+        
+        # Check if any validation failed
+        failed_checks = [check for check, status in results.items() if not status]
+        if failed_checks:
+            logger.error(f"System validation failed. Failed checks: {failed_checks}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"System validation failed. Failed checks: {failed_checks}"
+            )
+            
+        logger.info("✓ Application startup complete")
+        
+        yield
+        
+    except Exception as e:
+        logger.error(f"✗ Application startup failed: {str(e)}")
+        raise
+    finally:
+        try:
+            # Close database connections
+            logger.info("Closing database connections...")
+            engine = get_engine()
+            await engine.dispose()
+            logger.info("✓ Application shutdown complete")
+        except Exception as e:
+            logger.error(f"✗ Application shutdown failed: {str(e)}")
 
 # Create FastAPI app with lifespan
 app = FastAPI(
@@ -146,42 +168,4 @@ async def global_exception_handler(request: Request, exc: Exception):
     return JSONResponse(
         status_code=500,
         content={"detail": "Internal server error"}
-    )
-
-@app.on_event("startup")
-async def startup_event():
-    """Startup event handler"""
-    try:
-        # Initialize database
-        await init_db()
-        
-        # Run startup validation
-        validator = StartupValidator(settings)
-        results = await validator.run_all_checks()
-        
-        # Check if any validation failed
-        failed_checks = [check[0] for check in results if not check[1]]
-        if failed_checks:
-            raise HTTPException(
-                status_code=500,
-                detail=f"System validation failed. Failed checks: {failed_checks}"
-            )
-            
-        logger.info("✓ Application startup complete")
-    except Exception as e:
-        logger.error(f"✗ Application startup failed: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Application startup failed: {str(e)}"
-        )
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Shutdown event handler"""
-    try:
-        # Close database connections
-        engine = get_engine()
-        await engine.dispose()
-        logger.info("✓ Application shutdown complete")
-    except Exception as e:
-        logger.error(f"✗ Application shutdown failed: {str(e)}") 
+    ) 
