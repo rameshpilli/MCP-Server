@@ -1,7 +1,7 @@
 # API Key Management
 
 ## Overview
-The MCP (Model Control Platform) uses API keys for authentication. Each key is associated with an owner and can have specific permissions and expiration dates.
+The MCP (Model Context Protocol) uses API keys for authentication. Each key is associated with an owner and can have specific permissions and expiration dates.
 
 ## Getting an API Key
 

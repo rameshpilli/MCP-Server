@@ -20,12 +20,15 @@ import pandas as pd
 import csv
 from functools import lru_cache
 from tenacity import retry, stop_after_attempt, wait_exponential
-from app.core.config import ServerConfig
+from app.core.database import DatabaseConfig
 from app.core.auth import api_key_manager, APIKey
+from app.core.logger import logger, log_connection_info
+import argparse
+import sys
 
 # Configure logging with more detail
 logging.basicConfig(
-    level=getattr(logging, ServerConfig.LOG_LEVEL),
+    level=getattr(logging, os.getenv("LOG_LEVEL", "INFO")),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
@@ -34,30 +37,21 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Server configuration
-class ServerConfig:
-    ALLOWED_EXTENSIONS = {'.txt', '.log', '.py', '.json', '.yaml', '.yml', '.md', '.csv'}
-    MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
-    BASE_DIR = os.path.join(os.getcwd(), 'data')  # Restrict to data directory
-    API_KEYS = {"test_key", "dev_key"}  # Sample API keys
-    CACHE_TTL = 300  # Cache TTL in seconds (5 minutes)
-    RATE_LIMIT = "20/minute"  # Rate limit per IP
-
 # Create data directory if it doesn't exist
-os.makedirs(ServerConfig.BASE_DIR, exist_ok=True)
+os.makedirs(DatabaseConfig.BASE_DIR, exist_ok=True)
 
 # Initialize rate limiter
 limiter = Limiter(key_func=get_remote_address)
 
 # Initialize cache
-api_cache = TTLCache(maxsize=100, ttl=ServerConfig.CACHE_TTL)
+api_cache = TTLCache(maxsize=100, ttl=DatabaseConfig.CACHE_TTL)
 
 # Initialize API key security
 api_key_header = APIKeyHeader(name="X-API-Key")
 
 app = FastAPI(
     title="MCP Server",
-    description="Model Control Platform for managing AI models",
+    description="Model Context Protocol for managing model interactions",
     version="1.0.0"
 )
 
@@ -109,10 +103,10 @@ def validate_file_path(file_path: str) -> Path:
     """Validate and normalize file path within data directory."""
     try:
         # Convert to absolute path and resolve any symlinks
-        path = Path(os.path.join(ServerConfig.BASE_DIR, file_path)).resolve()
+        path = Path(os.path.join(DatabaseConfig.BASE_DIR, file_path)).resolve()
         
         # Check if the path is within the base directory
-        if not str(path).startswith(str(ServerConfig.BASE_DIR)):
+        if not str(path).startswith(str(DatabaseConfig.BASE_DIR)):
             raise HTTPException(status_code=403, detail="Access to files outside data directory is forbidden")
         
         return path
@@ -121,13 +115,13 @@ def validate_file_path(file_path: str) -> Path:
 
 def validate_file_size(file_path: Path):
     """Validate file size."""
-    if file_path.stat().st_size > ServerConfig.MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail=f"File size exceeds maximum limit of {ServerConfig.MAX_FILE_SIZE/1024/1024}MB")
+    if file_path.stat().st_size > DatabaseConfig.MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail=f"File size exceeds maximum limit of {DatabaseConfig.MAX_FILE_SIZE/1024/1024}MB")
 
 def validate_file_extension(file_path: Path):
     """Validate file extension."""
-    if file_path.suffix not in ServerConfig.ALLOWED_EXTENSIONS:
-        raise HTTPException(status_code=400, detail=f"File type not allowed. Allowed extensions: {ServerConfig.ALLOWED_EXTENSIONS}")
+    if file_path.suffix not in DatabaseConfig.ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"File type not allowed. Allowed extensions: {DatabaseConfig.ALLOWED_EXTENSIONS}")
 
 def get_cache_key(task_type: str, parameters: Dict[str, Any]) -> str:
     """Generate a cache key from task type and parameters."""
@@ -243,7 +237,7 @@ async def root():
     """
 
 @app.post("/execute-task", response_model=TaskResponse)
-@limiter.limit(ServerConfig.RATE_LIMIT)
+@limiter.limit(DatabaseConfig.RATE_LIMIT)
 async def execute_task(request: Request, task: TaskRequest, api_key: APIKey = Depends(verify_api_key)):
     client_ip = request.client.host
     logger.info(
@@ -506,7 +500,7 @@ async def execute_task(request: Request, task: TaskRequest, api_key: APIKey = De
                         "https://api.openweathermap.org/data/2.5/weather",
                         params={
                             "q": city,
-                            "appid": ServerConfig.WEATHER_API_KEY,
+                            "appid": DatabaseConfig.WEATHER_API_KEY,
                             "units": "metric"
                         }
                     )
@@ -539,7 +533,7 @@ async def execute_task(request: Request, task: TaskRequest, api_key: APIKey = De
                         params={
                             "category": category,
                             "language": "en",
-                            "apiKey": ServerConfig.NEWS_API_KEY
+                            "apiKey": DatabaseConfig.NEWS_API_KEY
                         }
                     )
                     response.raise_for_status()
@@ -875,10 +869,30 @@ async def get_model_status(
 
 @app.get("/health")
 async def health_check():
-    """Simple health check endpoint."""
+    """Health check endpoint."""
     return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
 
+@app.on_event("startup")
+async def startup_event():
+    """Log startup information."""
+    mode = os.getenv("APP_ENV", "development")
+    log_connection_info(
+        host=DatabaseConfig.HOST,
+        port=DatabaseConfig.PORT,
+        mode=mode
+    )
+    logger.info(
+        "database_connection",
+        db_url=DatabaseConfig.get_db_url(),
+        storage_backend=DatabaseConfig.STORAGE_BACKEND
+    )
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Model Context Protocol for managing model interactions"
+    )
+    # Add arguments here
+    args = parser.parse_args()
+
 if __name__ == "__main__":
-    logger.info("Starting MCP Server...")
-    import uvicorn
-    uvicorn.run(app, host=ServerConfig.HOST, port=ServerConfig.PORT, log_level="info")
+    main()

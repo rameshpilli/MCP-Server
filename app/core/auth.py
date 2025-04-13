@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from typing import Dict, Optional, Set, List
 import secrets
 import logging
@@ -7,6 +7,13 @@ import sqlite3
 import os
 from dataclasses import dataclass
 import json
+from fastapi import HTTPException, Security, Depends
+from fastapi.security import APIKeyHeader
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from .models import ModelRecord, APIKey as DBAPIKey
+from .database import get_db
+from .logger import logger
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +28,7 @@ class APIKey:
     is_active: bool
     last_used: Optional[datetime]
     usage_count: int
+    rate_limit: str
 
     @classmethod
     def from_db_row(cls, row: tuple) -> 'APIKey':
@@ -33,131 +41,87 @@ class APIKey:
             permissions=json.loads(row[5]),
             is_active=bool(row[6]),
             last_used=datetime.fromisoformat(row[7]) if row[7] else None,
-            usage_count=row[8]
+            usage_count=row[8],
+            rate_limit=row[9]
         )
 
+class APIKeyCreate(BaseModel):
+    """API key creation model"""
+    owner: str
+    expires_at: Optional[datetime] = None
+    permissions: List[str] = ["read"]
+    rate_limit: str = "20/minute"
+
 class APIKeyManager:
-    """Manage API keys and authentication"""
+    """Manages API key generation, validation, and storage"""
     
-    def __init__(self, db_path: str = "data/keys.db"):
-        self.db_path = db_path
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        self._init_db()
+    def __init__(self):
+        self.key_length = 32
     
-    def _init_db(self):
-        """Initialize the SQLite database and create tables if they don't exist."""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS api_keys (
-                    key_id TEXT PRIMARY KEY,
-                    key TEXT UNIQUE NOT NULL,
-                    owner TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    expires_at TEXT NOT NULL,
-                    permissions TEXT NOT NULL,
-                    is_active INTEGER NOT NULL DEFAULT 1,
-                    last_used TEXT,
-                    usage_count INTEGER NOT NULL DEFAULT 0
-                )
-            """)
-            conn.commit()
-
-    def generate_key(self, owner: str, expires_at: datetime,
-                    permissions: List[str]) -> APIKey:
-        """Generate a new API key."""
+    async def generate_key(
+        self,
+        owner: str,
+        expires_at: Optional[datetime] = None,
+        permissions: Optional[List[str]] = None
+    ) -> DBAPIKey:
+        """Generate a new API key"""
+        key = secrets.token_urlsafe(self.key_length)
         key_id = secrets.token_urlsafe(16)
-        key = secrets.token_urlsafe(32)
         
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute("""
-                INSERT INTO api_keys (
-                    key_id, key, owner, created_at, expires_at,
-                    permissions, is_active, usage_count
-                ) VALUES (?, ?, ?, ?, ?, ?, 1, 0)
-            """, (
-                key_id, key, owner,
-                datetime.utcnow().isoformat(),
-                expires_at.isoformat(),
-                json.dumps(permissions)
-            ))
-            conn.commit()
-
-        return APIKey(
+        api_key = DBAPIKey(
             key_id=key_id,
             key=key,
             owner=owner,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
             expires_at=expires_at,
-            permissions=permissions,
+            permissions=permissions or ["read"],
             is_active=True,
             last_used=None,
-            usage_count=0
+            usage_count=0,
+            rate_limit="20/minute"
         )
+        
+        return api_key
     
-    def validate_key(self, key: str, required_permissions: Optional[List[str]] = None) -> bool:
-        """Validate an API key and update its usage statistics."""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("""
-                SELECT key_id, permissions, is_active, expires_at
-                FROM api_keys WHERE key = ?
-            """, (key,))
-            row = cursor.fetchone()
+    async def validate_key(self, db: AsyncSession, key: str) -> Optional[DBAPIKey]:
+        """Validate an API key"""
+        try:
+            result = await db.execute(
+                select(DBAPIKey).where(
+                    DBAPIKey.key == key,
+                    DBAPIKey.is_active == True,
+                    (DBAPIKey.expires_at.is_(None) | (DBAPIKey.expires_at > datetime.now(UTC)))
+                )
+            )
+            api_key = result.scalar_one_or_none()
+            if api_key:
+                api_key.last_used = datetime.now(UTC)
+                api_key.usage_count += 1
+                await db.commit()
+            return api_key
+        except Exception as e:
+            logger.error(f"Error validating API key: {str(e)}")
+            await db.rollback()
+            return None
+    
+    async def revoke_key(self, db: AsyncSession, key: str) -> bool:
+        """Revoke an API key"""
+        try:
+            result = await db.execute(
+                select(DBAPIKey).where(DBAPIKey.key == key)
+            )
+            api_key = result.scalar_one_or_none()
             
-            if not row:
-                return False
-                
-            key_id, permissions_json, is_active, expires_at = row
-            permissions = json.loads(permissions_json)
-            expires_at = datetime.fromisoformat(expires_at)
-            
-            if not is_active or expires_at < datetime.utcnow():
-                return False
-                
-            if required_permissions:
-                if not all(p in permissions for p in required_permissions):
-                    return False
+            if api_key:
+                api_key.is_active = False
+                await db.commit()
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Error revoking API key: {str(e)}")
+            await db.rollback()
+            return False
 
-            # Update usage statistics
-            conn.execute("""
-                UPDATE api_keys
-                SET last_used = ?, usage_count = usage_count + 1
-                WHERE key_id = ?
-            """, (datetime.utcnow().isoformat(), key_id))
-            conn.commit()
-            
-            return True
-    
-    def revoke_key(self, key_id: str) -> bool:
-        """Revoke an API key."""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("""
-                UPDATE api_keys SET is_active = 0
-                WHERE key_id = ? AND is_active = 1
-            """, (key_id,))
-            conn.commit()
-            return cursor.rowcount > 0
-    
-    def get_key_info(self, key_id: str) -> Optional[APIKey]:
-        """Get information about a specific API key."""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("SELECT * FROM api_keys WHERE key_id = ?", (key_id,))
-            row = cursor.fetchone()
-            return APIKey.from_db_row(row) if row else None
-    
-    def list_keys(self, owner: Optional[str] = None) -> List[APIKey]:
-        """List all API keys, optionally filtered by owner."""
-        with sqlite3.connect(self.db_path) as conn:
-            query = "SELECT * FROM api_keys"
-            params = []
-            
-            if owner:
-                query += " WHERE owner = ?"
-                params.append(owner)
-                
-            cursor = conn.execute(query, params)
-            return [APIKey.from_db_row(row) for row in cursor.fetchall()]
-
-# Global API key manager instance
 api_key_manager = APIKeyManager()
 
 # Example usage:
@@ -180,3 +144,80 @@ else:
     # Deny access
     pass
 """ 
+
+X_API_KEY = APIKeyHeader(name="X-API-Key", auto_error=True)
+TEST_API_KEY = os.getenv("TEST_API_KEY", "test_key_dev_only")
+IS_DEV_MODE = os.getenv("APP_ENV", "development") == "development"
+
+class ModelAuth:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def get_model_by_key(self, api_key: str) -> Optional[ModelRecord]:
+        """Get model record by API key"""
+        if IS_DEV_MODE and api_key == TEST_API_KEY:
+            # In dev mode, return a test model with full permissions
+            return ModelRecord(
+                id="test_model",
+                name="Test Model",
+                api_key=TEST_API_KEY,
+                is_active=True,
+                config={
+                    "allowed_sources": ["*"],
+                    "permissions": ["*"],
+                    "rate_limit": "1000/minute"
+                }
+            )
+        
+        return await self.db.get(ModelRecord, ModelRecord.api_key == api_key and ModelRecord.is_active == True)
+
+    async def validate_api_key(self, api_key: str = Security(X_API_KEY)) -> ModelRecord:
+        """Validate API key and return model record"""
+        if not api_key:
+            raise HTTPException(
+                status_code=401,
+                detail="API key is required"
+            )
+        
+        model = await self.get_model_by_key(api_key)
+        if not model:
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid or expired API key"
+            )
+        
+        if not model.is_active:
+            raise HTTPException(
+                status_code=403,
+                detail="Model is not active"
+            )
+        
+        return model
+
+async def get_current_model(
+    api_key: str = Security(X_API_KEY),
+    db: AsyncSession = Depends(get_db)
+) -> ModelRecord:
+    """Dependency to get current authenticated model"""
+    auth = ModelAuth(db)
+    return await auth.validate_api_key(api_key)
+
+def check_model_permissions(required_permissions: list[str]):
+    """Decorator to check model permissions"""
+    async def check_permissions(model: ModelRecord = Depends(get_current_model)):
+        if "*" in model.config.get("permissions", []):
+            return model
+            
+        missing_permissions = [
+            perm for perm in required_permissions 
+            if perm not in model.config.get("permissions", [])
+        ]
+        
+        if missing_permissions:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Missing required permissions: {', '.join(missing_permissions)}"
+            )
+        return model
+        
+    return check_permissions 

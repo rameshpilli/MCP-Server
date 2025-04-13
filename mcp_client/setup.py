@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="mcp-client",
+    name="mcp_client",
     version="0.1.0",
     packages=find_packages(),
     install_requires=[
@@ -17,7 +17,7 @@ setup(
     },
     author="Your Name",
     author_email="your.email@company.com",
-    description="Client SDK for Model Control Platform (MCP)",
+    description="Client SDK for Model Context Protocol (MCP)",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
     url="https://github.com/rameshpilli/MCP-Server",

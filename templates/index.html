@@ -3,145 +3,26 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MCP Query Interface</title>
-    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <title>Model Control Protocol</title>
+    <link href="/static/css/styles.css" rel="stylesheet">
 </head>
-<body class="bg-gray-100">
-    <div class="container mx-auto px-4 py-8">
-        <h1 class="text-3xl font-bold mb-8">MCP Query Interface</h1>
+<body>
+    <div class="container">
+        <h1>Welcome to Model Control Protocol</h1>
+        <p>A protocol for managing model context and interactions.</p>
         
-        <!-- Query Form -->
-        <div class="bg-white rounded-lg shadow-md p-6 mb-8">
-            <form id="queryForm" class="space-y-4">
-                <div>
-                    <label for="apiKey" class="block text-sm font-medium text-gray-700">API Key</label>
-                    <input type="text" id="apiKey" name="apiKey" required
-                           class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
-                </div>
-                <div>
-                    <label for="query" class="block text-sm font-medium text-gray-700">Natural Language Query</label>
-                    <textarea id="query" name="query" rows="3" required
-                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"></textarea>
-                </div>
-                <button type="submit"
-                        class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
-                    Execute Query
-                </button>
-            </form>
+        <div class="api-section">
+            <h2>API Documentation</h2>
+            <ul>
+                <li><a href="/docs">Interactive API Documentation</a></li>
+                <li><a href="/redoc">ReDoc Documentation</a></li>
+            </ul>
         </div>
-
-        <!-- Results Section -->
-        <div id="results" class="bg-white rounded-lg shadow-md p-6 hidden">
-            <h2 class="text-xl font-semibold mb-4">Query Results</h2>
-            <div class="space-y-4">
-                <div class="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                        <span class="font-medium">Query ID:</span>
-                        <span id="queryId"></span>
-                    </div>
-                    <div>
-                        <span class="font-medium">Execution Time:</span>
-                        <span id="executionTime"></span>
-                    </div>
-                    <div>
-                        <span class="font-medium">Data Source:</span>
-                        <span id="dataSource"></span>
-                    </div>
-                    <div>
-                        <span class="font-medium">Row Count:</span>
-                        <span id="rowCount"></span>
-                    </div>
-                </div>
-                <div class="overflow-x-auto">
-                    <table id="resultTable" class="min-w-full divide-y divide-gray-200">
-                        <thead class="bg-gray-50"></thead>
-                        <tbody class="bg-white divide-y divide-gray-200"></tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-
-        <!-- Error Alert -->
-        <div id="error" class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mt-4 hidden" role="alert">
-            <span id="errorMessage" class="block sm:inline"></span>
+        
+        <div class="health-section">
+            <h2>System Health</h2>
+            <p>Check the system status at <a href="/health">/health</a></p>
         </div>
     </div>
-
-    <script>
-        document.getElementById('queryForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            
-            const apiKey = document.getElementById('apiKey').value;
-            const query = document.getElementById('query').value;
-            
-            // Hide previous results/errors
-            document.getElementById('results').classList.add('hidden');
-            document.getElementById('error').classList.add('hidden');
-            
-            try {
-                const response = await fetch('/api/query', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        api_key: apiKey,
-                        query: query
-                    })
-                });
-                
-                const data = await response.json();
-                
-                if (!response.ok) {
-                    throw new Error(data.detail || 'An error occurred');
-                }
-                
-                // Display results
-                document.getElementById('queryId').textContent = data.query_id;
-                document.getElementById('executionTime').textContent = `${data.execution_time.toFixed(3)}s`;
-                document.getElementById('dataSource').textContent = data.source;
-                document.getElementById('rowCount').textContent = data.row_count;
-                
-                // Create table
-                const table = document.getElementById('resultTable');
-                const thead = table.querySelector('thead');
-                const tbody = table.querySelector('tbody');
-                
-                // Clear previous results
-                thead.innerHTML = '';
-                tbody.innerHTML = '';
-                
-                if (data.result.data && data.result.data.length > 0) {
-                    // Create headers
-                    const headers = Object.keys(data.result.data[0]);
-                    const headerRow = document.createElement('tr');
-                    headers.forEach(header => {
-                        const th = document.createElement('th');
-                        th.textContent = header;
-                        th.className = 'px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider';
-                        headerRow.appendChild(th);
-                    });
-                    thead.appendChild(headerRow);
-                    
-                    // Create rows
-                    data.result.data.forEach(row => {
-                        const tr = document.createElement('tr');
-                        headers.forEach(header => {
-                            const td = document.createElement('td');
-                            td.textContent = row[header];
-                            td.className = 'px-6 py-4 whitespace-nowrap text-sm text-gray-500';
-                            tr.appendChild(td);
-                        });
-                        tbody.appendChild(tr);
-                    });
-                }
-                
-                document.getElementById('results').classList.remove('hidden');
-            } catch (error) {
-                document.getElementById('errorMessage').textContent = error.message;
-                document.getElementById('error').classList.remove('hidden');
-            }
-        });
-    </script>
 </body>
 </html> 

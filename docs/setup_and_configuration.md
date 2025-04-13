@@ -1,8 +1,6 @@
-# MCP LLM Service Setup and Configuration Guide
+# Setup and Configuration Guide
 
-## Overview
-
-The MCP (Model Control Platform) LLM Service is a flexible and enterprise-ready system for managing and monitoring multiple LLM models in a corporate environment. This guide covers setup, configuration, and best practices.
+The MCP (Model Context Protocol) LLM Service is a flexible and enterprise-ready system for managing and monitoring multiple LLM models in a corporate environment. This guide covers setup, configuration, and best practices.
 
 ## Quick Start
 

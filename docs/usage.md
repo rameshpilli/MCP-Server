@@ -1,4 +1,4 @@
-# MCP (Model Control Platform) Usage Guide
+# MCP (Model Context Protocol) Usage Guide
 
 ## Table of Contents
 - [Installation](#installation)
