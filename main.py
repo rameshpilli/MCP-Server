@@ -20,53 +20,87 @@ import pandas as pd
 import csv
 from functools import lru_cache
 from tenacity import retry, stop_after_attempt, wait_exponential
-from app.core.database import DatabaseConfig
 from app.core.auth import api_key_manager, APIKey
 from app.core.logger import logger, log_connection_info
+from app.core.config import Settings, get_settings
+from app.core.database import init_db, get_db
+from app.core.middleware import UsageTrackingMiddleware, APIKeyMiddleware
+from app.api import router as api_router, health, keys, models
+from contextlib import asynccontextmanager
 import argparse
-import sys
 
-# Configure logging with more detail
+# Get settings instance
+settings = get_settings()
+
+# Configure logging
 logging.basicConfig(
-    level=getattr(logging, os.getenv("LOG_LEVEL", "INFO")),
+    level=getattr(logging, settings.LOG_LEVEL, "INFO"),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler('mcp_server.log')
+        logging.FileHandler(settings.LOG_FILE)
     ]
 )
 logger = logging.getLogger(__name__)
 
-# Create data directory if it doesn't exist
-os.makedirs(DatabaseConfig.BASE_DIR, exist_ok=True)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup and shutdown events"""
+    try:
+        # Initialize database
+        logger.info("Initializing database...")
+        await init_db()
+        logger.info("Database initialized successfully")
+        
+        yield
+        
+    except Exception as e:
+        logger.error(f"Failed to initialize application: {str(e)}")
+        raise
+    finally:
+        # Cleanup on shutdown
+        logger.info("Shutting down application...")
+
+# Create FastAPI app
+app = FastAPI(
+    title=settings.APP_NAME,
+    description=settings.APP_DESCRIPTION,
+    version=settings.APP_VERSION,
+    lifespan=lifespan
+)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Add API key middleware
+app.add_middleware(APIKeyMiddleware)
+
+# Add usage tracking middleware
+app.add_middleware(UsageTrackingMiddleware)
+
+# Include routers
+app.include_router(api_router, prefix="/api")
+app.include_router(health.router, tags=["health"])
+app.include_router(keys.router, prefix="/api/keys", tags=["api-keys"])
+app.include_router(models.router, prefix="/api/models", tags=["models"])
 
 # Initialize rate limiter
 limiter = Limiter(key_func=get_remote_address)
 
 # Initialize cache
-api_cache = TTLCache(maxsize=100, ttl=DatabaseConfig.CACHE_TTL)
+api_cache = TTLCache(maxsize=100, ttl=settings.CACHE_TTL)
 
 # Initialize API key security
 api_key_header = APIKeyHeader(name="X-API-Key")
 
-app = FastAPI(
-    title="MCP Server",
-    description="Model Context Protocol for managing model interactions",
-    version="1.0.0"
-)
-
-# Add rate limiter error handler
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 class TaskRequest(BaseModel):
     task_type: Literal["read_file", "list_directory", "file_info", "search_files", "calculate_hash",
@@ -103,10 +137,10 @@ def validate_file_path(file_path: str) -> Path:
     """Validate and normalize file path within data directory."""
     try:
         # Convert to absolute path and resolve any symlinks
-        path = Path(os.path.join(DatabaseConfig.BASE_DIR, file_path)).resolve()
+        path = Path(os.path.join(settings.BASE_DIR, file_path)).resolve()
         
         # Check if the path is within the base directory
-        if not str(path).startswith(str(DatabaseConfig.BASE_DIR)):
+        if not str(path).startswith(str(settings.BASE_DIR)):
             raise HTTPException(status_code=403, detail="Access to files outside data directory is forbidden")
         
         return path
@@ -115,13 +149,13 @@ def validate_file_path(file_path: str) -> Path:
 
 def validate_file_size(file_path: Path):
     """Validate file size."""
-    if file_path.stat().st_size > DatabaseConfig.MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail=f"File size exceeds maximum limit of {DatabaseConfig.MAX_FILE_SIZE/1024/1024}MB")
+    if file_path.stat().st_size > settings.MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail=f"File size exceeds maximum limit of {settings.MAX_FILE_SIZE/1024/1024}MB")
 
 def validate_file_extension(file_path: Path):
     """Validate file extension."""
-    if file_path.suffix not in DatabaseConfig.ALLOWED_EXTENSIONS:
-        raise HTTPException(status_code=400, detail=f"File type not allowed. Allowed extensions: {DatabaseConfig.ALLOWED_EXTENSIONS}")
+    if file_path.suffix not in settings.ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"File type not allowed. Allowed extensions: {settings.ALLOWED_EXTENSIONS}")
 
 def get_cache_key(task_type: str, parameters: Dict[str, Any]) -> str:
     """Generate a cache key from task type and parameters."""
@@ -237,7 +271,7 @@ async def root():
     """
 
 @app.post("/execute-task", response_model=TaskResponse)
-@limiter.limit(DatabaseConfig.RATE_LIMIT)
+@limiter.limit(settings.DEFAULT_RATE_LIMIT)
 async def execute_task(request: Request, task: TaskRequest, api_key: APIKey = Depends(verify_api_key)):
     client_ip = request.client.host
     logger.info(
@@ -500,7 +534,7 @@ async def execute_task(request: Request, task: TaskRequest, api_key: APIKey = De
                         "https://api.openweathermap.org/data/2.5/weather",
                         params={
                             "q": city,
-                            "appid": DatabaseConfig.WEATHER_API_KEY,
+                            "appid": settings.WEATHER_API_KEY,
                             "units": "metric"
                         }
                     )
@@ -533,7 +567,7 @@ async def execute_task(request: Request, task: TaskRequest, api_key: APIKey = De
                         params={
                             "category": category,
                             "language": "en",
-                            "apiKey": DatabaseConfig.NEWS_API_KEY
+                            "apiKey": settings.NEWS_API_KEY
                         }
                     )
                     response.raise_for_status()
@@ -877,22 +911,36 @@ async def startup_event():
     """Log startup information."""
     mode = os.getenv("APP_ENV", "development")
     log_connection_info(
-        host=DatabaseConfig.HOST,
-        port=DatabaseConfig.PORT,
+        host=settings.HOST,
+        port=settings.PORT,
         mode=mode
     )
     logger.info(
         "database_connection",
-        db_url=DatabaseConfig.get_db_url(),
-        storage_backend=DatabaseConfig.STORAGE_BACKEND
+        db_url=settings.get_db_url(),
+        storage_backend=settings.STORAGE_BACKEND
     )
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Model Context Protocol for managing model interactions"
-    )
-    # Add arguments here
+    """Main entry point for running the application directly."""
+    parser = argparse.ArgumentParser(description="Run the MCP application server")
+    parser.add_argument("--host", default=settings.HOST, help="Host to bind to")
+    parser.add_argument("--port", type=int, default=settings.PORT, help="Port to bind to")
+    parser.add_argument("--reload", action="store_true", default=settings.RELOAD, help="Enable auto-reload")
+    parser.add_argument("--workers", type=int, default=settings.WORKERS, help="Number of worker processes")
+    parser.add_argument("--debug", action="store_true", default=settings.DEBUG, help="Enable debug mode")
+    
     args = parser.parse_args()
+    
+    import uvicorn
+    uvicorn.run(
+        "main:app",
+        host=args.host,
+        port=args.port,
+        reload=args.reload,
+        workers=args.workers,
+        log_level="debug" if args.debug else "info"
+    )
 
 if __name__ == "__main__":
     main()

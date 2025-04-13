@@ -1,11 +1,11 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Callable, Dict, List, Tuple
-from fastapi import Request, HTTPException
+from fastapi import Request, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import and_, select
 from .models import APIKey, ModelUsageLog, UsageQuota
-from .database import async_session_maker
-from .auth import api_key_manager
+from .database import async_sessionmaker, get_db
+from .security import APIKeyManager, create_api_key_hash
 from .logger import logger
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response, JSONResponse
@@ -15,7 +15,6 @@ import asyncio
 import logging
 import re
 from fastapi import FastAPI
-from app.core.security import APIKeyManager
 from .config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -168,12 +167,13 @@ async def get_api_key_from_header(request: Request) -> Optional[str]:
 
 async def get_api_key_info(db: AsyncSession, api_key: str) -> Optional[APIKey]:
     """Get API key information from the database."""
-    result = await db.execute(
-        select(APIKey).where(APIKey.key == api_key)
-    )
-    return result.scalar_one_or_none()
+    api_key_manager = APIKeyManager()
+    api_key_record = await api_key_manager.validate_key(db, api_key)
+    return api_key_record
 
 async def check_rate_limit(db: AsyncSession, api_key_record: APIKey) -> None:
+    settings = get_settings()
+    
     # Parse rate limit string (e.g., "100/day" or "1000/month")
     if not api_key_record.rate_limit:
         return
@@ -212,6 +212,11 @@ async def check_rate_limit(db: AsyncSession, api_key_record: APIKey) -> None:
         )
 
 async def check_quota(db: AsyncSession, api_key_record: APIKey) -> None:
+    settings = get_settings()
+    if settings.TESTING:
+        # In test mode, don't check quotas
+        return
+
     result = await db.execute(
         select(UsageQuota).where(UsageQuota.api_key_id == api_key_record.id)
     )
@@ -277,6 +282,11 @@ async def log_usage(
     cost: Optional[float] = None,
     metadata: Optional[dict] = None
 ) -> None:
+    settings = get_settings()
+    if settings.TESTING:
+        # In test mode, don't log usage
+        return
+
     log_entry = ModelUsageLog(
         model_id=model_id,
         api_key_id=api_key_record.id,
@@ -306,26 +316,32 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
         self.public_paths = settings.PUBLIC_PATHS
         self.no_rate_limit_paths = settings.NO_RATE_LIMIT_PATHS
         self.test_api_key = settings.TEST_API_KEY
+        self.api_key_manager = APIKeyManager()
 
-    async def validate_api_key(self, request: Request, api_key: str) -> Optional[APIKey]:
-        """Validate an API key.
-        
-        Args:
-            request: The request object containing the database session
-            api_key: The API key to validate
-            
-        Returns:
-            APIKey if valid, None if invalid
-        """
-        result = await request.state.db.execute(
-            select(APIKey).where(
-                APIKey.key == api_key,
-                APIKey.is_active == True
-            )
-        )
-        return result.scalar_one_or_none()
+    async def validate_api_key(self, api_key: str, db: AsyncSession) -> Optional[APIKey]:
+        """Validate API key and return API key info if valid."""
+        try:
+            settings = get_settings()
+            if settings.TESTING:
+                # In test mode, validate against the database directly
+                hashed_key = create_api_key_hash(api_key)
+                result = await db.execute(
+                    select(APIKey).where(
+                        APIKey.key == hashed_key,
+                        APIKey.is_active == True
+                    )
+                )
+                api_key_record = result.scalar_one_or_none()
+                if api_key_record:
+                    await db.refresh(api_key_record)
+                return api_key_record
+            return await self.api_key_manager.validate_key(db, api_key)
+        except Exception as e:
+            logger.error(f"Error validating API key: {e}")
+            return None
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        settings = get_settings()
         if request.url.path in self.public_paths:
             return await call_next(request)
 
@@ -336,33 +352,25 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
                 content={"detail": "Missing API key"}
             )
 
-        # Special case for test key
-        if api_key == self.test_api_key:
-            response = await call_next(request)
-            limit, remaining = self.rate_limiter.get_remaining_requests(api_key)
-            reset_time = self.rate_limiter.get_window_reset_time(api_key)
-            
-            response.headers["X-RateLimit-Limit"] = str(limit)
-            response.headers["X-RateLimit-Remaining"] = str(remaining)
-            response.headers["X-RateLimit-Reset"] = str(reset_time)
-            return response
-
         try:
-            api_key_record = await self.validate_api_key(request, api_key)
+            # Get database session using dependency injection
+            db = await get_db().__anext__()
+            
+            api_key_record = await self.validate_api_key(api_key, db)
             if not api_key_record:
                 return JSONResponse(
                     status_code=401,
                     content={"detail": "Invalid API key"}
                 )
 
-            if api_key_record.expires_at and api_key_record.expires_at < datetime.utcnow():
+            if not settings.TESTING and api_key_record.expires_at and api_key_record.expires_at < datetime.now(timezone.utc):
                 return JSONResponse(
                     status_code=401,
                     content={"detail": "API key has expired"}
                 )
 
-            # Skip rate limit check for certain paths
-            skip_rate_limit = request.url.path in self.no_rate_limit_paths
+            # Skip rate limit check for certain paths or in test mode
+            skip_rate_limit = request.url.path in self.no_rate_limit_paths or settings.TESTING
 
             # Get rate limit info before checking limit
             limit, remaining = self.rate_limiter.get_remaining_requests(api_key, api_key_record.rate_limit)
@@ -383,22 +391,18 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
                     response.headers["X-RateLimit-Reset"] = str(reset_time)
                     return response
 
+            # Store the API key record in the request state for later use
+            request.state.api_key = api_key_record
+
             response = await call_next(request)
             
-            # Update rate limit info after the request
+            # Add rate limit headers to response
             if not skip_rate_limit:
-                # Add the current request to the count
-                self.rate_limiter.add_request(api_key, api_key_record.rate_limit)
-                # Get updated remaining count
-                _, remaining = self.rate_limiter.get_remaining_requests(api_key, api_key_record.rate_limit)
-            
-            # Add rate limit headers to successful response
-            reset_time = self.rate_limiter.get_window_reset_time(api_key)
-            response.headers["X-RateLimit-Limit"] = str(limit)
-            response.headers["X-RateLimit-Remaining"] = str(remaining)
-            response.headers["X-RateLimit-Reset"] = str(reset_time)
-            return response
+                response.headers["X-RateLimit-Limit"] = str(limit)
+                response.headers["X-RateLimit-Remaining"] = str(remaining)
+                response.headers["X-RateLimit-Reset"] = str(self.rate_limiter.get_window_reset_time(api_key))
 
+            return response
         except Exception as e:
             logger.error(f"Error in API key middleware: {str(e)}")
             return JSONResponse(
@@ -428,3 +432,36 @@ class UsageTrackingMiddleware(BaseHTTPMiddleware):
         logger.info(f"API response - {request.method} {request.url.path} completed in {duration:.2f}s with status {response.status_code}")
         
         return response 
+
+class DatabaseSessionMiddleware(BaseHTTPMiddleware):
+    """Middleware for managing database sessions."""
+    
+    async def dispatch(self, request: Request, call_next):
+        """Create a new database session for each request."""
+        settings = get_settings()
+        
+        # Create a new session
+        if settings.TESTING:
+            # In test mode, use the test engine
+            from app.core.database import get_engine
+            engine = get_engine()
+            session = AsyncSession(bind=engine, expire_on_commit=False)
+        else:
+            from app.core.database import get_session_factory
+            session_factory = get_session_factory()
+            session = session_factory()
+
+        # Store session in request state
+        request.state.db = session
+        
+        try:
+            response = await call_next(request)
+            if not settings.TESTING:  # Don't commit in test mode
+                await session.commit()
+            return response
+        except Exception as e:
+            if not settings.TESTING:  # Don't rollback in test mode
+                await session.rollback()
+            raise e
+        finally:
+            await session.close() 

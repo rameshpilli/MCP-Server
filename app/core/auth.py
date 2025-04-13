@@ -221,3 +221,39 @@ def check_model_permissions(required_permissions: list[str]):
         return model
         
     return check_permissions 
+
+async def get_current_api_key(
+    api_key: str = Security(X_API_KEY),
+    db: AsyncSession = Depends(get_db)
+) -> DBAPIKey:
+    """Get current API key from request."""
+    try:
+        result = await db.execute(
+            select(DBAPIKey).where(
+                DBAPIKey.key == api_key,
+                DBAPIKey.is_active == True,
+                (DBAPIKey.expires_at.is_(None) | (DBAPIKey.expires_at > datetime.now(UTC)))
+            )
+        )
+        api_key_record = result.scalar_one_or_none()
+        if not api_key_record:
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid or expired API key"
+            )
+        
+        # Update last used timestamp and usage count
+        api_key_record.last_used = datetime.now(UTC)
+        api_key_record.usage_count += 1
+        await db.commit()
+        
+        return api_key_record
+    except Exception as e:
+        logger.error(f"Error validating API key: {str(e)}")
+        await db.rollback()
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid API key"
+        ) 

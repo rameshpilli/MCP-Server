@@ -6,6 +6,7 @@ from app.core.config import get_settings
 from passlib.context import CryptContext
 import hashlib
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 # Get settings instance
 settings = get_settings()
@@ -36,10 +37,13 @@ class APIKeyManager:
         # Generate a random key
         plain_key = secrets.token_urlsafe(32)
         
+        # Hash the key for storage
+        hashed_key = create_api_key_hash(plain_key)
+        
         # Create API key record
         api_key = APIKey(
             key_id=key_id,
-            key=plain_key,
+            key=hashed_key,
             owner=owner,
             created_at=datetime.now(UTC),
             expires_at=expires_at,
@@ -64,11 +68,17 @@ class APIKeyManager:
         Returns:
             APIKey if valid, None if invalid
         """
+        # Hash the provided key for comparison
+        hashed_key = create_api_key_hash(key)
+        
+        # Use SQLAlchemy ORM for better type safety and maintainability
         result = await db.execute(
-            "SELECT * FROM api_keys WHERE key = :key AND is_active = TRUE",
-            {"key": key}
+            select(APIKey).where(
+                APIKey.key == hashed_key,
+                APIKey.is_active == True
+            )
         )
-        api_key = result.fetchone()
+        api_key = result.scalar_one_or_none()
         
         if not api_key:
             return None

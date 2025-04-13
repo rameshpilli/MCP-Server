@@ -26,22 +26,28 @@ class Settings(BaseSettings):
     TESTING: bool = False
     TEST_DB_URL: str = "sqlite+aiosqlite:///:memory:"
     
+    # Application Configuration
+    APP_NAME: str = "Model Context Protocol"
+    APP_DESCRIPTION: str = "A platform for managing ML model contexts and deployments"
+    APP_VERSION: str = "0.1.0"
+    PRODUCTION: bool = False
+    
     # Server Configuration
-    PORT: int = 8000
-    HOST: str = "0.0.0.0"
-    DEBUG: bool = False
+    PORT: int = Field(default=8000, env='APP_PORT')
+    HOST: str = Field(default="0.0.0.0", env='APP_HOST')
+    DEBUG: bool = Field(default=False, env='APP_DEBUG')
+    RELOAD: bool = Field(default=True, env='APP_RELOAD')
+    WORKERS: int = Field(default=1, env='APP_WORKERS')
     ENVIRONMENT: str = "development"
     BASE_DIR: str = os.path.join(os.getcwd(), 'data')
+    CORS_ORIGINS: List[str] = ["*"]
     
     # Database Configuration
-    POSTGRES_USER: str = "postgres"
-    POSTGRES_PASSWORD: str = "postgres"
-    POSTGRES_HOST: str = "localhost"
-    POSTGRES_PORT: int = 5432
-    POSTGRES_DB: str = "mcp"
-    
-    # Azure SQL Database settings
-    AZURE_SQL_CONNECTION_STRING: Optional[str] = None
+    DB_USER: str = Field(default="postgres", env='DB_USER')
+    DB_PASSWORD: str = Field(default="postgres", env='DB_PASSWORD')
+    DB_HOST: str = Field(default="localhost", env='DB_HOST')
+    DB_PORT: int = Field(default=5432, env='DB_PORT')
+    DB_NAME: str = Field(default="mcp", env='DB_NAME')
     
     # Security
     SECRET_KEY: str = Field(default="dev_secret_key", description="Secret key for JWT encoding")
@@ -119,12 +125,10 @@ class Settings(BaseSettings):
         extra = "allow"
 
     def get_db_url(self) -> str:
-        """Get the database URL based on the storage backend."""
+        """Get database URL based on environment"""
         if self.TESTING:
             return self.TEST_DB_URL
-        if self.STORAGE_BACKEND == StorageBackend.AZURE:
-            return self.AZURE_SQL_CONNECTION_STRING or ""
-        return f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+        return f"postgresql+asyncpg://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
 
 @lru_cache()
 def get_settings() -> Settings:

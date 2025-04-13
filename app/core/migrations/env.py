@@ -4,7 +4,8 @@ from sqlalchemy import pool
 from alembic import context
 import asyncio
 import os
-from app.core.database import Base, DatabaseConfig
+from app.core.database import Base
+from app.core.config import get_settings
 
 # Load Alembic configuration
 config = context.config
@@ -17,7 +18,8 @@ target_metadata = Base.metadata
 
 def get_url():
     """Get database URL based on environment"""
-    return DatabaseConfig.get_db_url()
+    settings = get_settings()
+    return settings.get_db_url()
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""

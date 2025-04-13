@@ -1,18 +1,15 @@
+from functools import lru_cache
 from typing import AsyncGenerator
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import async_session_maker
+from app.core.config import Settings
+from app.core.database import get_db
 
-async def get_db() -> AsyncGenerator[AsyncSession, None]:
-    """Get database session."""
-    async with async_session_maker() as session:
-        try:
-            yield session
-        finally:
-            await session.close()
+@lru_cache()
+def get_settings() -> Settings:
+    """Get application settings"""
+    return Settings()
 
-def get_settings():
-    """Dependency for getting application settings."""
-    from app.core.config import Settings
-    return Settings() 
+# Export get_db from database module
+__all__ = ['get_settings', 'get_db'] 

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timedelta, UTC
 from typing import List, Optional
@@ -18,12 +18,14 @@ api_key_manager = APIKeyManager()
 
 class APIKeyCreate(BaseModel):
     owner: str
+    key_id: Optional[str] = None
     expiry_days: Optional[int] = None
     permissions: List[str] = []
     rate_limit: str = "5/minute"  # Default to 5/minute as per test expectation
 
 class APIKeyResponse(BaseModel):
     key: str
+    key_id: str
     owner: str
     expires_at: datetime | None
     permissions: List[str]
@@ -39,7 +41,7 @@ class APIKeyInfo(BaseModel):
     usage_count: int
     rate_limit: Optional[str]
 
-@router.post("/keys", response_model=APIKeyResponse)
+@router.post("/keys", response_model=APIKeyResponse, status_code=status.HTTP_201_CREATED)
 async def create_api_key(
     key_data: APIKeyCreate,
     db: AsyncSession = Depends(get_db)
@@ -49,8 +51,8 @@ async def create_api_key(
     expiry_days = key_data.expiry_days or settings.API_KEY_EXPIRY_DAYS
     expires_at = datetime.now(UTC) + timedelta(days=expiry_days)
     
-    # Generate a unique key_id
-    key_id = f"key_{uuid.uuid4().hex[:8]}"
+    # Use provided key_id or generate a new one
+    key_id = key_data.key_id or f"key_{uuid.uuid4().hex[:8]}"
     
     plain_key, api_key = await api_key_manager.generate_key(
         key_id=key_id,  # Pass the key_id to generate_key
@@ -66,6 +68,7 @@ async def create_api_key(
     
     return APIKeyResponse(
         key=plain_key,  # Return the plain key, not the hashed one
+        key_id=key_id,  # Add the key_id to the response
         owner=api_key.owner,
         expires_at=api_key.expires_at,
         permissions=api_key.permissions,

@@ -9,8 +9,8 @@ import logging
 from pydantic import BaseModel
 
 from app.core.database import get_db
-from app.core.models import ModelRecord
-from app.core.auth import get_current_model
+from app.core.models import ModelRecord, APIKey
+from app.core.auth import get_current_api_key
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -51,7 +51,8 @@ class ModelResponse(BaseModel):
 @router.post("/models", response_model=ModelResponse)
 async def create_model(
     model_data: ModelCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    api_key: APIKey = Depends(get_current_api_key)
 ):
     """Create a new model."""
     # Check if model with same ID already exists
@@ -83,7 +84,8 @@ async def create_model(
 
 @router.get("/models", response_model=List[ModelResponse])
 async def list_models(
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    api_key: APIKey = Depends(get_current_api_key)
 ):
     """List all registered models."""
     result = await db.execute(select(ModelRecord))
@@ -93,7 +95,8 @@ async def list_models(
 @router.get("/models/{model_id}", response_model=ModelResponse)
 async def get_model(
     model_id: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    api_key: APIKey = Depends(get_current_api_key)
 ):
     """Get details of a specific model."""
     result = await db.execute(
@@ -109,7 +112,8 @@ async def get_model(
 
 @router.get("/models/status")
 async def get_models_status(
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    api_key: APIKey = Depends(get_current_api_key)
 ):
     """Get general status of models."""
     result = await db.execute(select(ModelRecord))
@@ -136,7 +140,8 @@ async def get_models_status(
 )
 async def get_model_status(
     model_id: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    api_key: APIKey = Depends(get_current_api_key)
 ) -> Dict[str, Any]:
     """
     Get the status and metrics of a registered model.
