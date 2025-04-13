@@ -20,6 +20,16 @@ aioodbc==0.4.0     # For Azure SQL
 pyodbc==5.0.1      # For Azure SQL
 alembic==1.13.1    # Database migrations
 
+# NLP and ML Dependencies
+sentence-transformers==2.5.1
+transformers==4.38.2
+torch>=2.2.0
+numpy>=1.24.3
+scikit-learn>=1.4.0
+spacy>=3.7.4
+nltk>=3.8.1
+textblob>=0.18.0
+
 # Azure
 azure-storage-blob==12.19.0
 azure-identity==1.15.0
