@@ -1,305 +1,125 @@
 # Model Context Protocol (MCP)
 
-A FastAPI-based application for managing ML model contexts and deployments with built-in API key management, rate limiting, and PostgreSQL integration.
+MCP is a platform that enables secure access to enterprise data sources through custom ML models. It provides a standardized way to connect models with various data sources while maintaining security and monitoring usage.
 
-## Table of Contents
-- [Setup](#setup)
-- [Project Structure](#project-structure)
-- [Core Components](#core-components)
-- [API Endpoints](#api-endpoints)
-- [Configuration](#configuration)
-- [Development](#development)
-- [Testing](#testing)
+## Core Features
 
-## Setup
-
-### Prerequisites
-- Python 3.8+
-- PostgreSQL 12+
-
-### Installation
-
-1. Clone the repository:
-```bash
-git clone <repository-url>
-cd mcp
-```
-
-2. Create and activate virtual environment:
-```bash
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-```
-
-3. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-4. Set up environment variables (optional):
-```bash
-cp .env.example .env
-# Edit .env with your settings
-```
-
-5. Run the application:
-```bash
-python run.py
-```
+- **Data Source Access**: Connect to enterprise databases, Azure Storage, and Snowflake
+- **Access Control**: Fine-grained permissions for data access
+- **Usage Monitoring**: Track and monitor model usage and data access
+- **Security**: API key management and audit logging
 
 ## Project Structure
 
 ```
 mcp/
-├── app/
-│   ├── api/              # API endpoints
-│   │   ├── auth.py      # Authentication
-│   │   ├── config.py    # Settings
-│   │   ├── database.py  # Database
-│   │   ├── middleware.py # Middleware
-│   │   └── security.py  # Security
-│   └── models/          # Database models
-├── tests/               # Test suite
-├── main.py             # Application entry
-├── run.py              # Server runner
-└── requirements.txt    # Dependencies
+├── app/                    # Core application code
+│   ├── api/               # API endpoints
+│   ├── core/              # Core functionality
+│   ├── models/            # Database models
+│   └── schemas/           # Pydantic schemas
+├── tests/                 # Test files
+├── .env                   # Environment variables
+├── .env.example          # Example environment setup
+├── conftest.py           # Test configuration
+├── main.py               # Application entry point
+├── requirements.txt      # Project dependencies
+└── README.md            # Project documentation
 ```
 
-## Core Components
+## Setup
 
-### 1. Database Management (`app/core/database.py`)
-
-Handles database connections and session management.
-
-Key functions:
-- `init_db()`: Initializes database and creates tables
-- `get_db()`: Provides database session
-- `create_database_if_not_exists()`: Auto-creates database
-
-Example:
-```python
-# Get database session
-async with get_db() as db:
-    result = await db.execute(query)
-    await db.commit()
+1. Create a virtual environment:
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 ```
 
-### 2. Configuration (`app/core/config.py`)
-
-Manages application settings using Pydantic.
-
-Key settings:
-- Server configuration (host, port)
-- Database credentials
-- API settings
-- Security settings
-
-Example:
-```python
-from app.core.config import get_settings
-
-settings = get_settings()
-db_url = settings.get_db_url()
+2. Install dependencies:
+```bash
+pip install -r requirements.txt
 ```
 
-### 3. Authentication (`app/core/auth.py`)
-
-Handles API key management and validation.
-
-Key classes:
-- `APIKeyManager`: Generates and validates API keys
-- Methods:
-  - `generate_key()`: Creates new API key
-  - `validate_key()`: Validates existing key
-
-Example:
-```python
-api_key_manager = APIKeyManager()
-key, api_key = await api_key_manager.generate_key(
-    owner="user@example.com",
-    permissions=["read", "write"]
-)
+3. Configure environment:
+```bash
+cp .env.example .env
+# Edit .env with your settings
 ```
 
-### 4. Middleware (`app/core/middleware.py`)
-
-Contains request processing middleware.
-
-Components:
-- `APIKeyMiddleware`: Validates API keys
-- `UsageTrackingMiddleware`: Tracks API usage
-- `RateLimiter`: Handles rate limiting
-
-Example:
-```python
-app.add_middleware(APIKeyMiddleware)
-app.add_middleware(UsageTrackingMiddleware)
+4. Run the application:
+```bash
+uvicorn main:app --reload
 ```
 
-## API Endpoints
+## API Documentation
 
-### Health Check
-```http
-GET /health
-```
-Returns application health status.
+The API documentation is available at:
+- Swagger UI: http://localhost:8000/docs
+- ReDoc: http://localhost:8000/redoc
 
-### API Keys
-```http
-POST /api/keys
-GET /api/keys
-DELETE /api/keys/{key_id}
-```
+## Data Sources
 
-### Models
-```http
-GET /api/models
-POST /api/models
-GET /api/models/{model_id}
-```
+MCP supports the following data sources:
 
-## Configuration
+1. **Internal Databases**
+   - PostgreSQL databases
+   - Job market data
+   - Homebuilders data
 
-Environment variables (can be set in `.env`):
+2. **Cloud Storage**
+   - Azure Blob Storage
+   - Structured datasets
+   - Historical records
 
-```env
-# Server
-APP_PORT=8000
-APP_HOST=0.0.0.0
-APP_DEBUG=false
+3. **Data Warehouses**
+   - Snowflake
+   - Analytics-ready datasets
+   - Market metrics
 
-# Database
-DB_USER=postgres
-DB_PASSWORD=postgres
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=mcp
+## Security
 
-# Security
-SECRET_KEY=your_secret_key
-```
+1. **API Keys**
+   - Secure key generation
+   - Permission-based access
+   - Key rotation support
+
+2. **Data Access**
+   - Field-level permissions
+   - Usage quotas
+   - Audit logging
+
+3. **Monitoring**
+   - Usage tracking
+   - Error logging
+   - Access patterns
 
 ## Development
 
-### Running in Debug Mode
-```bash
-python run.py --debug --reload
-```
-
-### Command Line Options
-```bash
-python run.py --help
-```
-Available options:
-- `--host`: Host to bind to
-- `--port`: Port number
-- `--reload`: Enable auto-reload
-- `--debug`: Enable debug mode
-- `--workers`: Number of worker processes
-
-## Testing
-
-Run tests:
+1. **Running Tests**:
 ```bash
 pytest
 ```
 
-Run with coverage:
+2. **Code Style**:
 ```bash
-pytest --cov=app tests/
+flake8
+black .
 ```
 
-## Error Handling
-
-The application includes comprehensive error handling:
-
-1. Database Errors:
-   - Connection failures
-   - Migration errors
-   - Transaction errors
-
-2. API Errors:
-   - Invalid API keys
-   - Rate limit exceeded
-   - Invalid requests
-
-3. System Errors:
-   - Port already in use
-   - File system errors
-   - Permission issues
-
-Example error response:
-```json
-{
-  "detail": "Error message",
-  "code": "ERROR_CODE",
-  "timestamp": "2024-03-14T12:00:00Z"
-}
-```
-
-## Logging
-
-Structured logging is implemented throughout:
-
-```python
-logger.info("API request received", 
-    endpoint="/api/models",
-    method="POST",
-    user_id="123"
-)
-```
-
-Logs are written to:
-- Console (for development)
-- File (configurable path)
-- JSON format (for production)
-
-## Production Deployment
-
-For production:
-
-1. Set environment variables:
-```env
-PRODUCTION=true
-DEBUG=false
-```
-
-2. Use proper database credentials:
-```env
-DB_USER=production_user
-DB_PASSWORD=secure_password
-```
-
-3. Run with multiple workers:
+3. **Type Checking**:
 ```bash
-python run.py --workers 4
+mypy .
 ```
-
-## Security Best Practices
-
-1. API Key Management:
-   - Keys are hashed before storage
-   - Automatic expiration
-   - Rate limiting per key
-
-2. Database Security:
-   - Parameterized queries
-   - Connection pooling
-   - Transaction management
-
-3. Request Security:
-   - CORS protection
-   - Input validation
-   - Rate limiting
 
 ## Contributing
 
 1. Fork the repository
-2. Create feature branch
-3. Make changes
-4. Run tests
-5. Submit pull request
+2. Create a feature branch
+3. Make your changes
+4. Submit a pull request
 
 ## License
 
-[License Type] - See LICENSE file for details
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+Need help? Contact support@mcp.ai
