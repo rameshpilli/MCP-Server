@@ -1,6 +1,229 @@
 # Using the Model Context Protocol (MCP)
 
-This guide walks you through the process of registering and using your machine learning models with MCP.
+This guide walks you through the process of integrating your machine learning models with MCP to access our enterprise data sources.
+
+## What is MCP?
+
+MCP is a platform that allows you to:
+1. Connect your custom ML models to our enterprise data sources
+2. Access structured data from various sources (internal databases, Azure Storage, Snowflake, etc.)
+3. Run predictions on this data using your models
+4. Manage access control and usage tracking
+
+### Available Data Sources
+
+MCP provides access to various enterprise data sources:
+
+1. **Job Market Data**:
+   - Historical job postings
+   - Salary trends
+   - Industry-specific metrics
+   - Geographic distribution
+   ```json
+   {
+     "data_source": "jobs_db",
+     "access_level": "full",
+     "update_frequency": "daily",
+     "schema": {
+       "job_id": "string",
+       "title": "string",
+       "company": "string",
+       "location": "string",
+       "salary_range": "object",
+       "requirements": "array",
+       "posted_date": "datetime"
+     }
+   }
+   ```
+
+2. **Homebuilders Data**:
+   - Property listings
+   - Construction metrics
+   - Market trends
+   - Builder profiles
+   ```json
+   {
+     "data_source": "homebuilders_db",
+     "access_level": "read",
+     "update_frequency": "weekly",
+     "schema": {
+       "property_id": "string",
+       "builder_id": "string",
+       "location": "object",
+       "specs": "object",
+       "pricing": "object",
+       "construction_status": "string"
+     }
+   }
+   ```
+
+3. **Azure Storage Sources**:
+   - Raw data files
+   - Processed datasets
+   - Historical records
+   ```json
+   {
+     "data_source": "azure_storage",
+     "container": "enterprise_data",
+     "access_level": "read",
+     "available_formats": ["parquet", "csv", "json"]
+   }
+   ```
+
+4. **Snowflake Tables**:
+   - Analytics-ready datasets
+   - Aggregated metrics
+   - Cross-referenced data
+   ```json
+   {
+     "data_source": "snowflake",
+     "warehouse": "ENTERPRISE_WH",
+     "schemas": ["JOBS", "PROPERTIES", "MARKET_ANALYTICS"]
+   }
+   ```
+
+### Example: Registering a Model with Data Source Access
+
+When registering your model, specify which data sources it needs access to:
+
+```bash
+curl -X POST http://localhost:8000/api/models \
+  -H "X-API-Key: your_api_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "job-market-predictor",
+    "version": "1.0.0",
+    "description": "Predicts job market trends using historical data",
+    "data_sources": [
+      {
+        "name": "jobs_db",
+        "access_type": "read",
+        "required_fields": ["title", "salary_range", "location"]
+      },
+      {
+        "name": "market_analytics",
+        "access_type": "read",
+        "snowflake_table": "MARKET_ANALYTICS.JOB_TRENDS"
+      }
+    ],
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "job_title": {"type": "string"},
+        "location": {"type": "string"},
+        "timeframe": {"type": "string", "enum": ["3m", "6m", "1y"]}
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "predicted_salary_range": {
+          "type": "object",
+          "properties": {
+            "min": {"type": "number"},
+            "max": {"type": "number"}
+          }
+        },
+        "market_demand": {"type": "string", "enum": ["high", "medium", "low"]},
+        "growth_trend": {"type": "number"}
+      }
+    }
+  }'
+```
+
+### Example: Using Data Sources in Your Model
+
+Here's how to access the data sources in your model implementation:
+
+```python
+from fastapi import FastAPI, HTTPException, Depends
+from pydantic import BaseModel
+from typing import List, Optional
+from mcp.data import DataSourceClient  # MCP's data access library
+
+app = FastAPI()
+
+class MarketPredictionRequest(BaseModel):
+    job_title: str
+    location: str
+    timeframe: str
+
+class MarketPrediction(BaseModel):
+    predicted_salary_range: dict
+    market_demand: str
+    growth_trend: float
+
+class JobMarketPredictor:
+    def __init__(self, data_client: DataSourceClient):
+        self.data_client = data_client
+    
+    async def predict(self, job_title: str, location: str, timeframe: str) -> dict:
+        # Fetch historical job data
+        job_data = await self.data_client.query(
+            source="jobs_db",
+            query={
+                "title": job_title,
+                "location": location,
+                "posted_date": f"last_{timeframe}"
+            }
+        )
+        
+        # Fetch market analytics
+        market_trends = await self.data_client.query(
+            source="snowflake",
+            table="MARKET_ANALYTICS.JOB_TRENDS",
+            filters={
+                "job_category": job_title,
+                "region": location,
+                "period": timeframe
+            }
+        )
+        
+        # Your model logic here
+        prediction = self.model.predict(job_data, market_trends)
+        
+        return {
+            "predicted_salary_range": prediction.salary_range,
+            "market_demand": prediction.demand,
+            "growth_trend": prediction.trend
+        }
+
+# Initialize with your model and data client
+data_client = DataSourceClient(api_key="your_api_key")
+predictor = JobMarketPredictor(data_client)
+
+@app.post("/predict", response_model=MarketPrediction)
+async def predict(request: MarketPredictionRequest) -> MarketPrediction:
+    try:
+        result = await predictor.predict(
+            request.job_title,
+            request.location,
+            request.timeframe
+        )
+        return MarketPrediction(**result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+```
+
+### Data Access Controls
+
+1. **API Key Permissions**:
+   - Each API key has specific data source permissions
+   - Access can be limited to specific fields/tables
+   - Usage quotas per data source
+   - Rate limiting per endpoint
+
+2. **Audit Logging**:
+   - All data access is logged
+   - Usage metrics per model/key
+   - Access patterns monitoring
+   - Anomaly detection
+
+3. **Data Governance**:
+   - Field-level access control
+   - Data masking for sensitive fields
+   - Compliance with data policies
+   - Usage agreements enforcement
 
 ## Quick Start
 
