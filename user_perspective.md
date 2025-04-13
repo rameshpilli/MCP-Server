@@ -218,6 +218,8 @@ Common error responses:
 
 ## Example Integration (Python)
 
+### 1. Using Requests (Simple Client)
+
 ```python
 import requests
 
@@ -245,6 +247,334 @@ result = client.predict("mod_xxxxx", "This product is amazing!")
 print(result)  # {"sentiment": "positive", "confidence": 0.95}
 ```
 
+### 2. Using FastAPI (Full Integration)
+
+```python
+from fastapi import FastAPI, HTTPException, Depends, Header
+from pydantic import BaseModel
+import httpx
+from typing import Optional, List
+
+# Define your data models
+class PredictionRequest(BaseModel):
+    text: str
+
+class PredictionResponse(BaseModel):
+    sentiment: str
+    confidence: float
+
+class BatchPredictionRequest(BaseModel):
+    inputs: List[PredictionRequest]
+
+class BatchPredictionResponse(BaseModel):
+    predictions: List[PredictionResponse]
+
+# Create FastAPI app
+app = FastAPI(title="My Model Service")
+
+# API Key dependency
+async def get_api_key(x_api_key: str = Header(..., alias="X-API-Key")) -> str:
+    return x_api_key
+
+# MCP client class
+class MCPAsyncClient:
+    def __init__(self, api_key: str, base_url: str = "http://localhost:8000"):
+        self.api_key = api_key
+        self.base_url = base_url
+        self.headers = {
+            "X-API-Key": api_key,
+            "Content-Type": "application/json"
+        }
+    
+    async def predict(self, model_id: str, text: str) -> dict:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.base_url}/api/models/{model_id}/predict",
+                headers=self.headers,
+                json={"text": text}
+            )
+            if response.status_code != 200:
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=response.json()
+                )
+            return response.json()
+    
+    async def batch_predict(self, model_id: str, texts: List[str]) -> dict:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.base_url}/api/models/{model_id}/predict/batch",
+                headers=self.headers,
+                json={"inputs": [{"text": t} for t in texts]}
+            )
+            if response.status_code != 200:
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=response.json()
+                )
+            return response.json()
+
+# Create MCP client instance
+MODEL_ID = "mod_xxxxx"  # Your model ID
+mcp_client = None
+
+@app.on_event("startup")
+async def startup_event():
+    global mcp_client
+    mcp_client = MCPAsyncClient("your_api_key")
+
+# Single prediction endpoint
+@app.post("/predict", response_model=PredictionResponse)
+async def predict(
+    request: PredictionRequest,
+    api_key: str = Depends(get_api_key)
+) -> PredictionResponse:
+    try:
+        result = await mcp_client.predict(MODEL_ID, request.text)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Batch prediction endpoint
+@app.post("/predict/batch", response_model=BatchPredictionResponse)
+async def batch_predict(
+    request: BatchPredictionRequest,
+    api_key: str = Depends(get_api_key)
+) -> BatchPredictionResponse:
+    try:
+        texts = [item.text for item in request.inputs]
+        result = await mcp_client.batch_predict(MODEL_ID, texts)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Health check endpoint
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy"}
+
+"""
+To run this FastAPI service:
+
+1. Save as `model_service.py`
+2. Install dependencies:
+   ```bash
+   pip install fastapi uvicorn httpx
+   ```
+
+3. Run the server:
+   ```bash
+   uvicorn model_service:app --reload
+   ```
+
+4. Make predictions:
+   ```bash
+   # Single prediction
+   curl -X POST http://localhost:8000/predict \
+     -H "X-API-Key: your_api_key" \
+     -H "Content-Type: application/json" \
+     -d '{"text": "This product is amazing!"}'
+
+   # Batch prediction
+   curl -X POST http://localhost:8000/predict/batch \
+     -H "X-API-Key: your_api_key" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "inputs": [
+         {"text": "This product is amazing!"},
+         {"text": "Not satisfied with the quality."}
+       ]
+     }'
+   ```
+
+5. View API documentation:
+   - Swagger UI: http://localhost:8000/docs
+   - ReDoc: http://localhost:8000/redoc
+"""
+
+### 3. Using FastAPI with Environment Variables and Better Error Handling
+
+```python
+from fastapi import FastAPI, HTTPException, Depends, Header
+from pydantic import BaseModel, Field
+from pydantic_settings import BaseSettings
+import httpx
+from typing import Optional, List
+import os
+from enum import Enum
+import logging
+from datetime import datetime
+
+# Settings management
+class Settings(BaseSettings):
+    MCP_API_KEY: str = Field(..., env="MCP_API_KEY")
+    MCP_BASE_URL: str = Field("http://localhost:8000", env="MCP_BASE_URL")
+    MODEL_ID: str = Field(..., env="MODEL_ID")
+    LOG_LEVEL: str = Field("INFO", env="LOG_LEVEL")
+    
+    class Config:
+        env_file = ".env"
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Data models
+class SentimentEnum(str, Enum):
+    POSITIVE = "positive"
+    NEGATIVE = "negative"
+    NEUTRAL = "neutral"
+
+class PredictionRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=1000)
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "text": "This product is amazing!"
+            }
+        }
+
+class PredictionResponse(BaseModel):
+    sentiment: SentimentEnum
+    confidence: float = Field(..., ge=0, le=1)
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+class ErrorResponse(BaseModel):
+    error: str
+    detail: str
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+# Create FastAPI app
+app = FastAPI(
+    title="Sentiment Analysis Service",
+    description="API for sentiment analysis using MCP",
+    version="1.0.0"
+)
+
+# Load settings
+settings = Settings()
+
+# MCP client with better error handling
+class MCPClient:
+    def __init__(self, api_key: str, base_url: str):
+        self.api_key = api_key
+        self.base_url = base_url
+        self.headers = {
+            "X-API-Key": api_key,
+            "Content-Type": "application/json"
+        }
+    
+    async def predict(self, text: str) -> dict:
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(
+                    f"{self.base_url}/api/models/{settings.MODEL_ID}/predict",
+                    headers=self.headers,
+                    json={"text": text},
+                    timeout=10.0
+                )
+                response.raise_for_status()
+                return response.json()
+            except httpx.TimeoutException:
+                logger.error("Request to MCP timed out")
+                raise HTTPException(
+                    status_code=504,
+                    detail="Request to model service timed out"
+                )
+            except httpx.HTTPStatusError as e:
+                logger.error(f"MCP request failed: {e.response.text}")
+                raise HTTPException(
+                    status_code=e.response.status_code,
+                    detail=e.response.json()
+                )
+            except Exception as e:
+                logger.error(f"Unexpected error: {str(e)}")
+                raise HTTPException(
+                    status_code=500,
+                    detail="Internal server error"
+                )
+
+# Create MCP client instance
+mcp_client = MCPClient(settings.MCP_API_KEY, settings.MCP_BASE_URL)
+
+@app.post(
+    "/predict",
+    response_model=PredictionResponse,
+    responses={
+        200: {"model": PredictionResponse},
+        400: {"model": ErrorResponse},
+        401: {"model": ErrorResponse},
+        429: {"model": ErrorResponse},
+        500: {"model": ErrorResponse},
+    }
+)
+async def predict(
+    request: PredictionRequest,
+    api_key: str = Header(..., alias="X-API-Key")
+) -> PredictionResponse:
+    """
+    Get sentiment prediction for text.
+    
+    - **text**: The text to analyze (1-1000 characters)
+    """
+    logger.info(f"Received prediction request for text length: {len(request.text)}")
+    try:
+        result = await mcp_client.predict(request.text)
+        return PredictionResponse(**result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Prediction failed: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Prediction failed"
+        )
+
+@app.get("/health")
+async def health_check():
+    """Check if the service is healthy"""
+    return {
+        "status": "healthy",
+        "timestamp": datetime.utcnow(),
+        "version": app.version
+    }
+
+"""
+To use this enhanced version:
+
+1. Create a .env file:
+```env
+MCP_API_KEY=your_api_key
+MODEL_ID=mod_xxxxx
+MCP_BASE_URL=http://localhost:8000
+LOG_LEVEL=INFO
+```
+
+2. Run the service:
+```bash
+uvicorn service:app --reload
+```
+
+3. Make predictions with better error handling:
+```bash
+# Valid request
+curl -X POST http://localhost:8000/predict \
+  -H "X-API-Key: your_api_key" \
+  -H "Content-Type: application/json" \
+  -d '{"text": "This product is amazing!"}'
+
+# Invalid request (empty text)
+curl -X POST http://localhost:8000/predict \
+  -H "X-API-Key: your_api_key" \
+  -H "Content-Type: application/json" \
+  -d '{"text": ""}'
+```
+"""
+
 ## Troubleshooting
 
 1. **API Key Issues**:
@@ -263,3 +593,168 @@ print(result)  # {"sentiment": "positive", "confidence": 0.95}
    - Review error logs
 
 Need help? Contact support at -
+
+## Using Swagger UI
+
+The MCP API provides an interactive Swagger UI interface at `http://localhost:8000/docs`. Here's how to use it for common operations:
+
+### 1. Getting an API Key via Swagger UI
+
+1. Navigate to `http://localhost:8000/docs`
+2. Expand the "API Keys" section
+3. Click on `POST /api/keys`
+4. Click "Try it out"
+5. Modify the request body:
+   ```json
+   {
+     "owner": "your.email@example.com",
+     "description": "Model deployment key"
+   }
+   ```
+6. Click "Execute"
+7. Copy your API key from the response
+
+### 2. Authorizing in Swagger UI
+
+1. Click the "Authorize" button at the top
+2. Enter your API key in the "X-API-Key" field
+3. Click "Authorize"
+4. Close the authorization dialog
+
+Now all your requests will include the API key automatically.
+
+### 3. Registering a Model
+
+1. Expand the "Models" section
+2. Click on `POST /api/models`
+3. Click "Try it out"
+4. Modify the request body:
+   ```json
+   {
+     "name": "sentiment-analyzer",
+     "version": "1.0.0",
+     "description": "BERT-based sentiment analysis model",
+     "input_schema": {
+       "type": "object",
+       "properties": {
+         "text": {"type": "string"}
+       }
+     },
+     "output_schema": {
+       "type": "object",
+       "properties": {
+         "sentiment": {"type": "string", "enum": ["positive", "negative", "neutral"]},
+         "confidence": {"type": "number"}
+       }
+     }
+   }
+   ```
+5. Click "Execute"
+6. Save the `model_id` from the response
+
+### 4. Making Predictions
+
+1. Expand the "Predictions" section
+2. For single predictions:
+   - Click on `POST /api/models/{model_id}/predict`
+   - Click "Try it out"
+   - Enter your model_id
+   - Modify the request body:
+     ```json
+     {
+       "text": "This product is amazing!"
+     }
+     ```
+   - Click "Execute"
+
+3. For batch predictions:
+   - Click on `POST /api/models/{model_id}/predict/batch`
+   - Click "Try it out"
+   - Enter your model_id
+   - Modify the request body:
+     ```json
+     {
+       "inputs": [
+         {"text": "This product is amazing!"},
+         {"text": "Not satisfied with the quality."}
+       ]
+     }
+     ```
+   - Click "Execute"
+
+### 5. Monitoring Model Status
+
+1. Expand the "Models" section
+2. Click on `GET /api/models/{model_id}/status`
+3. Click "Try it out"
+4. Enter your model_id
+5. Click "Execute"
+
+### 6. Viewing Model Metrics
+
+1. Expand the "Models" section
+2. Click on `GET /api/models/{model_id}/metrics`
+3. Click "Try it out"
+4. Enter your model_id
+5. Click "Execute"
+
+### 7. Managing API Keys
+
+1. List all keys:
+   - Click on `GET /api/keys`
+   - Click "Try it out"
+   - Click "Execute"
+
+2. Revoke a key:
+   - Click on `DELETE /api/keys/{key_id}`
+   - Click "Try it out"
+   - Enter the key_id
+   - Click "Execute"
+
+### 8. Additional Features in Swagger UI
+
+1. **Schema Validation**:
+   - Each endpoint shows the exact schema required
+   - Required fields are marked with asterisks
+   - Enums show all possible values
+
+2. **Response Codes**:
+   - Each endpoint lists all possible response codes
+   - Example responses are provided for each code
+   - Error responses include detailed descriptions
+
+3. **Try it Out**:
+   - Test endpoints directly in the browser
+   - Automatically formats JSON
+   - Shows curl commands for each request
+   - Displays full request/response details
+
+4. **Export**:
+   - Download OpenAPI specification
+   - Generate client code
+   - Export curl commands
+
+### Tips for Using Swagger UI
+
+1. **Authentication**:
+   - Always authorize first
+   - Check if your token is still valid
+   - Look for the 🔓 (locked) icon next to protected endpoints
+
+2. **Request Bodies**:
+   - Use the "Schema" tab for field descriptions
+   - Click "Model" to see the full schema
+   - Use "Example Value" as a starting point
+
+3. **Responses**:
+   - Check "Server response" for detailed errors
+   - Use "Download" to save response data
+   - Note the response headers for rate limits
+
+4. **Troubleshooting**:
+   - Clear authorization and try again
+   - Check request body format
+   - Verify required fields are filled
+   - Look for validation errors in response
+
+Need help? Contact support at support@mcp.ai
