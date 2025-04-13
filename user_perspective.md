@@ -592,7 +592,7 @@ curl -X POST http://localhost:8000/predict \
    - Check model status
    - Review error logs
 
-Need help? Contact support at -
+Need help? Contact support at support@mcp.ai
 
 ## Using Swagger UI
 
@@ -756,5 +756,288 @@ Now all your requests will include the API key automatically.
    - Check request body format
    - Verify required fields are filled
    - Look for validation errors in response
+
+Need help? Contact support at support@mcp.ai
+
+## Using Internal or Third-Party Models
+
+### Registering ChatGPT-like Models
+
+When registering internal models or third-party API-based models (like ChatGPT, Claude, etc.), you'll need to:
+1. Define the model interface
+2. Handle API key management
+3. Set up proper error handling
+
+Here's an example of registering and using OpenAI's GPT model:
+
+1. Register the model with appropriate schemas:
+```bash
+curl -X POST http://localhost:8000/api/models \
+  -H "X-API-Key: your_api_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "gpt-wrapper",
+    "version": "1.0.0",
+    "description": "GPT-3.5 Turbo wrapper for chat completion",
+    "model_type": "third_party",
+    "provider": "openai",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "messages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "role": {
+                "type": "string",
+                "enum": ["system", "user", "assistant"]
+              },
+              "content": {
+                "type": "string"
+              }
+            },
+            "required": ["role", "content"]
+          }
+        },
+        "temperature": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2,
+          "default": 1
+        }
+      },
+      "required": ["messages"]
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "response": {
+          "type": "string"
+        },
+        "usage": {
+          "type": "object",
+          "properties": {
+            "prompt_tokens": {"type": "integer"},
+            "completion_tokens": {"type": "integer"},
+            "total_tokens": {"type": "integer"}
+          }
+        }
+      }
+    },
+    "config": {
+      "requires_api_key": true,
+      "provider_model": "gpt-3.5-turbo",
+      "max_tokens": 4096
+    }
+  }'
+```
+
+2. Example FastAPI implementation:
+```python
+from fastapi import FastAPI, HTTPException, Depends, Header
+from pydantic import BaseModel, Field
+from typing import List, Optional
+import openai
+from datetime import datetime
+
+class Message(BaseModel):
+    role: str
+    content: str
+
+class ChatRequest(BaseModel):
+    messages: List[Message]
+    temperature: Optional[float] = Field(1.0, ge=0, le=2)
+
+class TokenUsage(BaseModel):
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+
+class ChatResponse(BaseModel):
+    response: str
+    usage: TokenUsage
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+class GPTWrapper:
+    def __init__(self, api_key: str):
+        self.client = openai.OpenAI(api_key=api_key)
+    
+    async def generate(self, messages: List[dict], temperature: float = 1.0) -> dict:
+        try:
+            response = await self.client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": m.role, "content": m.content} for m in messages],
+                temperature=temperature
+            )
+            return {
+                "response": response.choices[0].message.content,
+                "usage": {
+                    "prompt_tokens": response.usage.prompt_tokens,
+                    "completion_tokens": response.usage.completion_tokens,
+                    "total_tokens": response.usage.total_tokens
+                }
+            }
+        except openai.RateLimitError:
+            raise HTTPException(status_code=429, detail="Rate limit exceeded")
+        except openai.AuthenticationError:
+            raise HTTPException(status_code=401, detail="Invalid OpenAI API key")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+app = FastAPI()
+
+# Initialize with environment variables
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+gpt_wrapper = GPTWrapper(OPENAI_API_KEY)
+
+@app.post("/predict", response_model=ChatResponse)
+async def predict(
+    request: ChatRequest,
+    api_key: str = Header(..., alias="X-API-Key")
+) -> ChatResponse:
+    """
+    Generate a chat completion using GPT-3.5-turbo
+    """
+    try:
+        result = await gpt_wrapper.generate(
+            messages=request.messages,
+            temperature=request.temperature
+        )
+        return ChatResponse(**result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+"""
+Usage example:
+
+1. Set up environment:
+```bash
+echo "OPENAI_API_KEY=your_openai_key" > .env
+```
+
+2. Make a request:
+```bash
+curl -X POST http://localhost:8000/predict \
+  -H "X-API-Key: your_mcp_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are a helpful assistant."
+      },
+      {
+        "role": "user",
+        "content": "What is the capital of France?"
+      }
+    ],
+    "temperature": 0.7
+  }'
+```
+
+Response:
+```json
+{
+  "response": "The capital of France is Paris.",
+  "usage": {
+    "prompt_tokens": 27,
+    "completion_tokens": 7,
+    "total_tokens": 34
+  },
+  "timestamp": "2024-03-14T12:34:56.789Z"
+}
+```
+"""
+
+### Best Practices for Internal Models
+
+1. **API Key Management**:
+   - Store provider API keys securely (use environment variables)
+   - Implement key rotation
+   - Use different keys for development/production
+
+2. **Error Handling**:
+   - Handle provider-specific errors
+   - Implement rate limiting
+   - Add proper logging
+   - Handle token limits
+
+3. **Performance Optimization**:
+   - Cache responses when appropriate
+   - Implement request queuing
+   - Monitor token usage
+   - Set appropriate timeouts
+
+4. **Security**:
+   - Validate input messages
+   - Sanitize outputs
+   - Implement content filtering
+   - Set up usage monitoring
+
+5. **Cost Management**:
+   - Track token usage
+   - Implement quotas
+   - Set up alerts for unusual usage
+   - Use cheaper models for development
+
+### Example: Registering Other Types of Models
+
+1. **Hugging Face Model**:
+```json
+{
+  "name": "bert-sentiment",
+  "version": "1.0.0",
+  "description": "BERT model from Hugging Face for sentiment analysis",
+  "model_type": "third_party",
+  "provider": "huggingface",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "text": {"type": "string"},
+      "options": {
+        "type": "object",
+        "properties": {
+          "return_all_scores": {"type": "boolean"}
+        }
+      }
+    }
+  },
+  "config": {
+    "model_id": "nlptown/bert-base-multilingual-uncased-sentiment",
+    "requires_api_key": true
+  }
+}
+```
+
+2. **Custom Internal Model**:
+```json
+{
+  "name": "internal-classifier",
+  "version": "2.0.0",
+  "description": "Custom-trained classifier for internal use",
+  "model_type": "internal",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "features": {
+        "type": "array",
+        "items": {"type": "number"}
+      }
+    }
+  },
+  "config": {
+    "batch_size": 32,
+    "requires_gpu": true,
+    "memory_requirement": "2GB"
+  }
+}
+```
 
 Need help? Contact support at support@mcp.ai
