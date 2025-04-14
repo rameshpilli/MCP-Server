@@ -1,195 +1,321 @@
-from typing import Optional, Dict, Any, List
-from datetime import datetime, UTC
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from app.core.models import ModelUsageLog
-from app.core.database import get_db
-from app.core.logger import logger
+"""Model client implementations."""
+
 import httpx
-from pydantic import BaseModel
+import json
+import time
+from typing import Dict, Any, Optional, List
 import asyncio
+import base64
+from datetime import datetime, UTC
 
-class ModelStats(BaseModel):
-    total_queries: int = 0
-    successful_queries: int = 0
-    failed_queries: int = 0
-    avg_latency: float = 0.0
-    last_query: Optional[datetime] = None
-    sources_used: Dict[str, int] = {}
+from app.core.logger import logger
+from app.core.config import ModelBackend, get_settings
 
-class ModelContext(BaseModel):
-    recent_queries: List[Dict[str, Any]] = []
-    preferred_sources: Dict[str, float] = {}
-    last_updated: datetime = datetime.utcnow()
-    max_history: int = 10
-
-class QueryResponse(BaseModel):
-    query_id: str
-    result: Any
-    execution_time: float
-    source: str
-    timestamp: datetime
+settings = get_settings()
 
 class ModelClient:
-    def __init__(
-        self,
-        model_id: str,
-        api_key: str,
-        base_url: str = "http://localhost:8000",
-        context_ttl: int = 3600
-    ):
-        self.model_id = model_id
+    """Base class for model clients."""
+    
+    async def generate(self, prompt: str, options: Dict[str, Any] = None) -> str:
+        """Generate text from a prompt."""
+        raise NotImplementedError("Subclasses must implement this method")
+    
+    async def embeddings(self, text: str) -> List[float]:
+        """Generate embeddings for a text."""
+        raise NotImplementedError("Subclasses must implement this method")
+    
+    async def update_metrics(self, successful: bool, tokens: int, latency: float) -> None:
+        """Update model metrics."""
+        raise NotImplementedError("Subclasses must implement this method")
+
+
+class OpenAIClient(ModelClient):
+    """Client for OpenAI API."""
+    
+    def __init__(self, api_key: str, model_id: str, model_name: str = "gpt-4", api_base: str = None, timeout: int = 60):
+        """Initialize OpenAI client."""
         self.api_key = api_key
-        self.base_url = base_url.rstrip('/')
-        self.context = ModelContext()
-        self.stats = ModelStats()
-        self.context_ttl = context_ttl
-        self._client = httpx.AsyncClient(
-            headers={"Authorization": f"Bearer {api_key}"}
+        self.model_id = model_id
+        self.model_name = model_name or "gpt-4"
+        self.api_base = api_base or "https://api.openai.com/v1"
+        self.timeout = timeout
+        self.client = httpx.AsyncClient(
+            base_url=self.api_base,
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            timeout=self.timeout
         )
-        self._lock = asyncio.Lock()
-
-    async def register(self, config: Dict[str, Any]) -> bool:
-        """Register model with the platform"""
+    
+    async def generate(self, prompt: str, options: Dict[str, Any] = None) -> str:
+        """Generate text from a prompt using OpenAI API."""
+        if options is None:
+            options = {}
+        
+        start_time = time.time()
+        successful = False
+        tokens = 0
+        
         try:
-            response = await self._client.post(
-                f"{self.base_url}/api/models/register",
-                json={"model_id": self.model_id, "config": config}
-            )
-            response.raise_for_status()
-            return True
-        except httpx.HTTPError as e:
-            raise RegistrationError(f"Failed to register model: {str(e)}")
-
-    async def connect(self) -> bool:
-        """Validate connection and load context"""
-        try:
-            response = await self._client.get(
-                f"{self.base_url}/api/models/validate",
-                params={"model_id": self.model_id}
-            )
-            response.raise_for_status()
-            
-            if context_data := response.json().get('context'):
-                self.context = ModelContext(**context_data)
-            
-            return True
-        except httpx.HTTPError as e:
-            raise ConnectionError(f"Failed to connect: {str(e)}")
-
-    async def query(
-        self,
-        query: str,
-        context: Optional[Dict[str, Any]] = None,
-        timeout: Optional[float] = None
-    ) -> QueryResponse:
-        """Execute a query with context tracking"""
-        async with self._lock:
-            start_time = datetime.utcnow()
-            try:
-                response = await self._client.post(
-                    f"{self.base_url}/api/query",
-                    json={
-                        "model_id": self.model_id,
-                        "query": query,
-                        "context": {**self.context.dict(), **(context or {})}
-                    },
-                    timeout=timeout
-                )
-                response.raise_for_status()
-                
-                execution_time = (datetime.utcnow() - start_time).total_seconds()
-                await self._update_stats(True, execution_time, response.json())
-                await self._update_context(query, response.json())
-                
-                return QueryResponse(**response.json())
-                
-            except httpx.HTTPError as e:
-                await self._update_stats(False, (datetime.utcnow() - start_time).total_seconds())
-                raise QueryError(f"Query failed: {str(e)}")
-
-    async def _update_stats(self, success: bool, latency: float, response: Optional[Dict] = None):
-        """Update model statistics"""
-        try:
-            usage_log = ModelUsageLog(
-                model_id=self.model_id,
-                query=response.get('query', ''),
-                source_id=response.get('source'),
-                execution_time=latency,
-                status='success' if success else 'failed',
-                model_metadata={
-                    'context': self.context.dict(),
-                    'response_metadata': response.get('metadata') if response else None
+            response = await self.client.post(
+                "/chat/completions",
+                json={
+                    "model": self.model_name,
+                    "messages": [
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": options.get("temperature", 0.7),
+                    "max_tokens": options.get("max_tokens", 1000),
+                    "top_p": options.get("top_p", 1.0),
+                    "frequency_penalty": options.get("frequency_penalty", 0.0),
+                    "presence_penalty": options.get("presence_penalty", 0.0)
                 }
             )
-            self.db.add(usage_log)
-            await self.db.commit()
+            response.raise_for_status()
+            result = response.json()
+            
+            text = result["choices"][0]["message"]["content"]
+            tokens = result.get("usage", {}).get("total_tokens", 0)
+            successful = True
+            
+            return text
         except Exception as e:
-            logger.error(f"Failed to update stats: {str(e)}")
-
-        self.stats.total_queries += 1
-        self.stats.successful_queries += success
-        self.stats.failed_queries += not success
-        
-        self.stats.avg_latency = self.stats.avg_latency * 0.7 + latency * 0.3 if self.stats.avg_latency else latency
-        self.stats.last_query = datetime.utcnow()
-        
-        if response and (source := response.get('source')):
-            self.stats.sources_used[source] = self.stats.sources_used.get(source, 0) + 1
-
-    async def _update_context(self, query: str, response: Dict[str, Any]):
-        """Update model context with query information"""
-        self.context.recent_queries.append({
-            'query': query,
-            'timestamp': datetime.utcnow().isoformat(),
-            'source': response.get('source'),
-            'execution_time': response.get('execution_time')
-        })
-        
-        if len(self.context.recent_queries) > self.context.max_history:
-            self.context.recent_queries = self.context.recent_queries[-self.context.max_history:]
-        
-        if source := response.get('source'):
-            current_score = self.context.preferred_sources.get(source, 0.5)
-            success_score = float(response.get('status') == 'success')
-            self.context.preferred_sources[source] = current_score * 0.7 + success_score * 0.3
-        
-        self.context.last_updated = datetime.utcnow()
-
-    async def get_stats(self) -> ModelStats:
-        """Get current model statistics"""
-        return self.stats
-
-    async def get_context(self) -> ModelContext:
-        """Get current model context"""
-        return self.context
-
-    async def clear_context(self):
-        """Reset model context"""
-        self.context = ModelContext()
-
-    async def close(self):
-        """Close client connection and save context"""
-        try:
-            await self._client.post(
-                f"{self.base_url}/api/models/{self.model_id}/context",
-                json=self.context.dict()
-            )
+            logger.error(f"Error generating text with OpenAI: {str(e)}")
+            raise
         finally:
-            await self._client.aclose()
+            latency = time.time() - start_time
+            await self.update_metrics(successful, tokens, latency)
+    
+    async def embeddings(self, text: str) -> List[float]:
+        """Generate embeddings for a text using OpenAI API."""
+        try:
+            response = await self.client.post(
+                "/embeddings",
+                json={
+                    "model": "text-embedding-ada-002",
+                    "input": text
+                }
+            )
+            response.raise_for_status()
+            result = response.json()
+            
+            return result["data"][0]["embedding"]
+        except Exception as e:
+            logger.error(f"Error generating embeddings with OpenAI: {str(e)}")
+            raise
+    
+    async def update_metrics(self, successful: bool, tokens: int, latency: float) -> None:
+        """Update model metrics in MCP database."""
+        from mcp.database import get_session, models
+        
+        try:
+            async with get_session() as session:
+                model = await models.get_model(session, self.model_id)
+                if not model:
+                    return
+                
+                # Get current metrics or initialize
+                metrics = model.metrics or {}
+                
+                # Update metrics
+                metrics["total_requests"] = metrics.get("total_requests", 0) + 1
+                
+                if successful:
+                    metrics["successful_requests"] = metrics.get("successful_requests", 0) + 1
+                else:
+                    metrics["failed_requests"] = metrics.get("failed_requests", 0) + 1
+                
+                metrics["total_tokens"] = metrics.get("total_tokens", 0) + tokens
+                
+                # Update average latency
+                current_latency = metrics.get("average_latency", 0.0)
+                total_requests = metrics.get("total_requests", 1)
+                metrics["average_latency"] = ((current_latency * (total_requests - 1)) + latency) / total_requests
+                
+                # Update last used timestamp
+                metrics["last_used"] = datetime.now(UTC).isoformat()
+                
+                # Save updated metrics
+                model.metrics = metrics
+                await models.update_model(session, model)
+                
+        except Exception as e:
+            logger.error(f"Error updating model metrics: {str(e)}")
 
-    async def __aenter__(self):
-        await self.connect()
-        return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.close()
+class AnthropicClient(ModelClient):
+    """Client for Anthropic API."""
+    
+    def __init__(self, api_key: str, model_id: str, model_name: str = "claude-2", api_base: str = None, timeout: int = 60):
+        """Initialize Anthropic client."""
+        self.api_key = api_key
+        self.model_id = model_id
+        self.model_name = model_name or "claude-2"
+        self.api_base = api_base or "https://api.anthropic.com/v1"
+        self.timeout = timeout
+        self.client = httpx.AsyncClient(
+            base_url=self.api_base,
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01"
+            },
+            timeout=self.timeout
+        )
+    
+    async def generate(self, prompt: str, options: Dict[str, Any] = None) -> str:
+        """Generate text from a prompt using Anthropic API."""
+        if options is None:
+            options = {}
+        
+        start_time = time.time()
+        successful = False
+        tokens = 0
+        
+        try:
+            response = await self.client.post(
+                "/messages",
+                json={
+                    "model": self.model_name,
+                    "messages": [
+                        {"role": "user", "content": prompt}
+                    ],
+                    "max_tokens": options.get("max_tokens", 1000),
+                    "temperature": options.get("temperature", 0.7),
+                    "top_p": options.get("top_p", 1.0)
+                }
+            )
+            response.raise_for_status()
+            result = response.json()
+            
+            text = result["content"][0]["text"]
+            # Anthropic doesn't return token count, estimate it
+            tokens = len(prompt.split()) + len(text.split())
+            successful = True
+            
+            return text
+        except Exception as e:
+            logger.error(f"Error generating text with Anthropic: {str(e)}")
+            raise
+        finally:
+            latency = time.time() - start_time
+            await self.update_metrics(successful, tokens, latency)
+    
+    async def update_metrics(self, successful: bool, tokens: int, latency: float) -> None:
+        """Update model metrics in MCP database."""
+        from mcp.database import get_session, models
+        
+        try:
+            async with get_session() as session:
+                model = await models.get_model(session, self.model_id)
+                if not model:
+                    return
+                
+                # Get current metrics or initialize
+                metrics = model.metrics or {}
+                
+                # Update metrics
+                metrics["total_requests"] = metrics.get("total_requests", 0) + 1
+                
+                if successful:
+                    metrics["successful_requests"] = metrics.get("successful_requests", 0) + 1
+                else:
+                    metrics["failed_requests"] = metrics.get("failed_requests", 0) + 1
+                
+                metrics["total_tokens"] = metrics.get("total_tokens", 0) + tokens
+                
+                # Update average latency
+                current_latency = metrics.get("average_latency", 0.0)
+                total_requests = metrics.get("total_requests", 1)
+                metrics["average_latency"] = ((current_latency * (total_requests - 1)) + latency) / total_requests
+                
+                # Update last used timestamp
+                metrics["last_used"] = datetime.now(UTC).isoformat()
+                
+                # Save updated metrics
+                model.metrics = metrics
+                await models.update_model(session, model)
+                
+        except Exception as e:
+            logger.error(f"Error updating model metrics: {str(e)}")
 
-class QueryError(Exception):
-    pass
 
-class RegistrationError(Exception):
-    pass
+class MockClient(ModelClient):
+    """Mock client for testing and development."""
+    
+    def __init__(self, model_id: str, model_name: str = "mock"):
+        """Initialize mock client."""
+        self.model_id = model_id
+        self.model_name = model_name
+    
+    async def generate(self, prompt: str, options: Dict[str, Any] = None) -> str:
+        """Generate a mock response."""
+        # Add a small delay to simulate processing
+        await asyncio.sleep(0.5)
+        
+        # Return a simple mock response
+        return f"This is a mock response from {self.model_name} for the prompt: '{prompt[:50]}...'"
+    
+    async def embeddings(self, text: str) -> List[float]:
+        """Generate mock embeddings."""
+        # Return a vector of 128 random values
+        import random
+        return [random.random() for _ in range(128)]
+    
+    async def update_metrics(self, successful: bool, tokens: int, latency: float) -> None:
+        """Update mock metrics."""
+        logger.info(f"Mock update metrics: successful={successful}, tokens={tokens}, latency={latency}")
 
-class UsageError(Exception):
-    pass 
+
+class ModelClientFactory:
+    """Factory for creating model clients."""
+    
+    def create_client_from_mcp_model(self, model):
+        """Create a client from an MCP model object."""
+        # Extract the API key from the model's configuration
+        api_key = model.configuration.get("api_key", "")
+        model_name = model.configuration.get("model_name", model.name)
+        
+        # Create the appropriate client based on backend type
+        if model.backend.lower() == ModelBackend.OPENAI.value:
+            return OpenAIClient(
+                api_key=api_key,
+                model_id=model.id,
+                model_name=model_name,
+                api_base=model.api_base
+            )
+        elif model.backend.lower() == ModelBackend.ANTHROPIC.value:
+            return AnthropicClient(
+                api_key=api_key,
+                model_id=model.id,
+                model_name=model_name,
+                api_base=model.api_base
+            )
+        elif model.backend.lower() == ModelBackend.LOCAL.value:
+            # For local models, use the mock client for now
+            return MockClient(model_id=model.id, model_name=model_name)
+        else:
+            # Default to mock client for unsupported backends
+            logger.warning(f"Unsupported model backend {model.backend}, using mock client")
+            return MockClient(model_id=model.id, model_name=model_name)
+    
+    def create_client(self, model_id: str, backend: str, api_key: str, model_name: str = None, api_base: str = None):
+        """Create a client based on backend type."""
+        backend_type = backend.lower()
+        
+        if backend_type == ModelBackend.OPENAI.value:
+            return OpenAIClient(
+                api_key=api_key,
+                model_id=model_id,
+                model_name=model_name,
+                api_base=api_base
+            )
+        elif backend_type == ModelBackend.ANTHROPIC.value:
+            return AnthropicClient(
+                api_key=api_key,
+                model_id=model_id,
+                model_name=model_name,
+                api_base=api_base
+            )
+        elif backend_type == ModelBackend.LOCAL.value:
+            return MockClient(model_id=model_id, model_name=model_name)
+        else:
+            logger.warning(f"Unsupported model backend {backend}, using mock client")
+            return MockClient(model_id=model_id, model_name=model_name) 

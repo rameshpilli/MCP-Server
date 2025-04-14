@@ -1,0 +1,179 @@
+{
+  "buckets": [
+    {
+      "name": "ml-model-artifacts",
+      "region": "us-west-2",
+      "created": "2023-03-15T10:30:45.000Z",
+      "objects": [
+        {
+          "key": "models/churn-prediction/v1/model.pkl",
+          "size": 245678901,
+          "last_modified": "2023-09-10T14:35:22.000Z",
+          "etag": "\"a1b2c3d4e5f6g7h8i9j0\"",
+          "storage_class": "STANDARD"
+        },
+        {
+          "key": "models/churn-prediction/v1/config.json",
+          "size": 4532,
+          "last_modified": "2023-09-10T14:35:24.000Z",
+          "etag": "\"1a2b3c4d5e6f7g8h9i0j\"",
+          "storage_class": "STANDARD"
+        },
+        {
+          "key": "models/churn-prediction/v1/metadata.json",
+          "size": 8976,
+          "last_modified": "2023-09-10T14:35:25.000Z",
+          "etag": "\"j0i9h8g7f6e5d4c3b2a1\"",
+          "storage_class": "STANDARD"
+        },
+        {
+          "key": "models/product-recommendation/v2/model.pkl",
+          "size": 389012345,
+          "last_modified": "2023-10-05T08:45:12.000Z",
+          "etag": "\"0j9i8h7g6f5e4d3c2b1a\"",
+          "storage_class": "STANDARD"
+        },
+        {
+          "key": "models/product-recommendation/v2/config.json",
+          "size": 5678,
+          "last_modified": "2023-10-05T08:45:15.000Z",
+          "etag": "\"z1y2x3w4v5u6t7s8r9q0\"",
+          "storage_class": "STANDARD"
+        },
+        {
+          "key": "embeddings/customer-embeddings/2023-10-01/embeddings.npy",
+          "size": 1234567890,
+          "last_modified": "2023-10-01T23:59:59.000Z",
+          "etag": "\"q0r9s8t7u6v5w4x3y2z1\"",
+          "storage_class": "STANDARD"
+        },
+        {
+          "key": "embeddings/customer-embeddings/2023-10-01/mapping.json",
+          "size": 8765432,
+          "last_modified": "2023-10-02T00:00:05.000Z",
+          "etag": "\"1z2y3x4w5v6u7t8s9r0q\"",
+          "storage_class": "STANDARD"
+        }
+      ]
+    },
+    {
+      "name": "data-lake-analytics",
+      "region": "us-west-2",
+      "created": "2022-11-20T08:15:30.000Z",
+      "objects": [
+        {
+          "key": "raw/transactions/2023/10/transactions_2023-10-15.parquet",
+          "size": 2345678901,
+          "last_modified": "2023-10-15T23:50:10.000Z",
+          "etag": "\"a9b8c7d6e5f4g3h2i1j0\"",
+          "storage_class": "STANDARD"
+        },
+        {
+          "key": "raw/transactions/2023/10/transactions_2023-10-14.parquet",
+          "size": 2342567890,
+          "last_modified": "2023-10-14T23:50:12.000Z",
+          "etag": "\"j1i2h3g4f5e6d7c8b9a0\"",
+          "storage_class": "STANDARD"
+        },
+        {
+          "key": "processed/customer_features/2023-10-15/daily_features.parquet",
+          "size": 987654321,
+          "last_modified": "2023-10-16T04:30:45.000Z",
+          "etag": "\"0a9b8c7d6e5f4g3h2i1j\"",
+          "storage_class": "STANDARD"
+        },
+        {
+          "key": "processed/customer_features/2023-10-14/daily_features.parquet",
+          "size": 985432109,
+          "last_modified": "2023-10-15T04:31:15.000Z",
+          "etag": "\"j0i1h2g3f4e5d6c7b8a9\"",
+          "storage_class": "STANDARD"
+        },
+        {
+          "key": "curated/customer_360/latest/customer_profile.parquet",
+          "size": 4567890123,
+          "last_modified": "2023-10-16T06:15:30.000Z",
+          "etag": "\"z9y8x7w6v5u4t3s2r1q0\"",
+          "storage_class": "STANDARD"
+        },
+        {
+          "key": "curated/product_analytics/latest/product_metrics.parquet",
+          "size": 1234509876,
+          "last_modified": "2023-10-16T07:20:45.000Z",
+          "etag": "\"q1r2s3t4u5v6w7x8y9z0\"",
+          "storage_class": "STANDARD"
+        }
+      ]
+    },
+    {
+      "name": "ml-experiment-tracking",
+      "region": "us-west-2",
+      "created": "2023-01-10T12:45:30.000Z",
+      "objects": [
+        {
+          "key": "experiments/churn-prediction/experiment_001/metrics.json",
+          "size": 12345,
+          "last_modified": "2023-08-20T15:30:45.000Z",
+          "etag": "\"a1b2c3d4e5f6g7h8i9j0\"",
+          "storage_class": "STANDARD"
+        },
+        {
+          "key": "experiments/churn-prediction/experiment_001/model_weights.h5",
+          "size": 123456789,
+          "last_modified": "2023-08-20T15:31:10.000Z",
+          "etag": "\"j0i9h8g7f6e5d4c3b2a1\"",
+          "storage_class": "STANDARD"
+        },
+        {
+          "key": "experiments/churn-prediction/experiment_001/confusion_matrix.png",
+          "size": 45678,
+          "last_modified": "2023-08-20T15:31:15.000Z",
+          "etag": "\"1a2b3c4d5e6f7g8h9i0j\"",
+          "storage_class": "STANDARD"
+        },
+        {
+          "key": "experiments/churn-prediction/experiment_002/metrics.json",
+          "size": 12567,
+          "last_modified": "2023-09-05T10:45:22.000Z",
+          "etag": "\"z1y2x3w4v5u6t7s8r9q0\"",
+          "storage_class": "STANDARD"
+        },
+        {
+          "key": "experiments/churn-prediction/experiment_002/model_weights.h5",
+          "size": 125678901,
+          "last_modified": "2023-09-05T10:45:45.000Z",
+          "etag": "\"q0r9s8t7u6v5w4x3y2z1\"",
+          "storage_class": "STANDARD"
+        },
+        {
+          "key": "experiments/churn-prediction/experiment_002/confusion_matrix.png",
+          "size": 46789,
+          "last_modified": "2023-09-05T10:45:50.000Z",
+          "etag": "\"1z2y3x4w5v6u7t8s9r0q\"",
+          "storage_class": "STANDARD"
+        },
+        {
+          "key": "experiments/product-recommendation/experiment_005/metrics.json",
+          "size": 23456,
+          "last_modified": "2023-10-01T18:20:30.000Z",
+          "etag": "\"a9b8c7d6e5f4g3h2i1j0\"",
+          "storage_class": "STANDARD"
+        },
+        {
+          "key": "experiments/product-recommendation/experiment_005/model_weights.h5",
+          "size": 345678901,
+          "last_modified": "2023-10-01T18:21:05.000Z",
+          "etag": "\"j1i2h3g4f5e6d7c8b9a0\"",
+          "storage_class": "STANDARD"
+        },
+        {
+          "key": "experiments/product-recommendation/experiment_005/precision_recall_curve.png",
+          "size": 56789,
+          "last_modified": "2023-10-01T18:21:10.000Z",
+          "etag": "\"0a9b8c7d6e5f4g3h2i1j\"",
+          "storage_class": "STANDARD"
+        }
+      ]
+    }
+  ]
+} 

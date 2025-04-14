@@ -1,0 +1,190 @@
+{
+  "databases": [
+    {
+      "name": "ANALYTICS_DB",
+      "schemas": [
+        {
+          "name": "SALES",
+          "tables": [
+            {
+              "name": "TRANSACTIONS",
+              "columns": [
+                {"name": "TRANSACTION_ID", "type": "VARCHAR(36)", "nullable": false},
+                {"name": "CUSTOMER_ID", "type": "VARCHAR(36)", "nullable": false},
+                {"name": "TRANSACTION_DATE", "type": "TIMESTAMP_NTZ(9)", "nullable": false},
+                {"name": "STORE_ID", "type": "VARCHAR(16)", "nullable": false},
+                {"name": "PRODUCT_ID", "type": "VARCHAR(24)", "nullable": false},
+                {"name": "QUANTITY", "type": "NUMBER(10,2)", "nullable": false},
+                {"name": "UNIT_PRICE", "type": "NUMBER(10,2)", "nullable": false},
+                {"name": "DISCOUNT", "type": "NUMBER(5,2)", "nullable": true},
+                {"name": "TOTAL_AMOUNT", "type": "NUMBER(12,2)", "nullable": false},
+                {"name": "PAYMENT_METHOD", "type": "VARCHAR(16)", "nullable": false},
+                {"name": "TRANSACTION_STATUS", "type": "VARCHAR(16)", "nullable": false}
+              ],
+              "row_count": 24578931,
+              "bytes": 4521678432,
+              "last_updated": "2023-10-15T08:45:22.000Z"
+            },
+            {
+              "name": "CUSTOMERS",
+              "columns": [
+                {"name": "CUSTOMER_ID", "type": "VARCHAR(36)", "nullable": false},
+                {"name": "FIRST_NAME", "type": "VARCHAR(50)", "nullable": false},
+                {"name": "LAST_NAME", "type": "VARCHAR(50)", "nullable": false},
+                {"name": "EMAIL", "type": "VARCHAR(100)", "nullable": true},
+                {"name": "PHONE", "type": "VARCHAR(20)", "nullable": true},
+                {"name": "ADDRESS", "type": "VARCHAR(200)", "nullable": true},
+                {"name": "CITY", "type": "VARCHAR(50)", "nullable": true},
+                {"name": "STATE", "type": "VARCHAR(2)", "nullable": true},
+                {"name": "ZIP_CODE", "type": "VARCHAR(10)", "nullable": true},
+                {"name": "SIGNUP_DATE", "type": "DATE", "nullable": false},
+                {"name": "LOYALTY_TIER", "type": "VARCHAR(20)", "nullable": true},
+                {"name": "LAST_PURCHASE_DATE", "type": "DATE", "nullable": true}
+              ],
+              "row_count": 1453892,
+              "bytes": 345678921,
+              "last_updated": "2023-10-12T14:30:45.000Z"
+            },
+            {
+              "name": "PRODUCTS",
+              "columns": [
+                {"name": "PRODUCT_ID", "type": "VARCHAR(24)", "nullable": false},
+                {"name": "PRODUCT_NAME", "type": "VARCHAR(100)", "nullable": false},
+                {"name": "CATEGORY", "type": "VARCHAR(50)", "nullable": false},
+                {"name": "SUBCATEGORY", "type": "VARCHAR(50)", "nullable": true},
+                {"name": "BRAND", "type": "VARCHAR(50)", "nullable": false},
+                {"name": "SUPPLIER_ID", "type": "VARCHAR(24)", "nullable": false},
+                {"name": "COST", "type": "NUMBER(10,2)", "nullable": false},
+                {"name": "RETAIL_PRICE", "type": "NUMBER(10,2)", "nullable": false},
+                {"name": "INVENTORY_STATUS", "type": "VARCHAR(20)", "nullable": false},
+                {"name": "DESCRIPTION", "type": "TEXT", "nullable": true},
+                {"name": "LAUNCH_DATE", "type": "DATE", "nullable": true},
+                {"name": "DISCONTINUED", "type": "BOOLEAN", "nullable": false}
+              ],
+              "row_count": 87234,
+              "bytes": 23456789,
+              "last_updated": "2023-10-10T11:20:15.000Z"
+            }
+          ]
+        },
+        {
+          "name": "MARKETING",
+          "tables": [
+            {
+              "name": "CAMPAIGNS",
+              "columns": [
+                {"name": "CAMPAIGN_ID", "type": "VARCHAR(24)", "nullable": false},
+                {"name": "CAMPAIGN_NAME", "type": "VARCHAR(100)", "nullable": false},
+                {"name": "START_DATE", "type": "DATE", "nullable": false},
+                {"name": "END_DATE", "type": "DATE", "nullable": true},
+                {"name": "CHANNEL", "type": "VARCHAR(50)", "nullable": false},
+                {"name": "BUDGET", "type": "NUMBER(12,2)", "nullable": false},
+                {"name": "TARGET_AUDIENCE", "type": "VARCHAR(50)", "nullable": true},
+                {"name": "OBJECTIVE", "type": "VARCHAR(200)", "nullable": false},
+                {"name": "STATUS", "type": "VARCHAR(20)", "nullable": false},
+                {"name": "OWNER", "type": "VARCHAR(50)", "nullable": false}
+              ],
+              "row_count": 1254,
+              "bytes": 456789,
+              "last_updated": "2023-10-08T16:45:30.000Z"
+            },
+            {
+              "name": "CAMPAIGN_PERFORMANCE",
+              "columns": [
+                {"name": "PERFORMANCE_ID", "type": "VARCHAR(36)", "nullable": false},
+                {"name": "CAMPAIGN_ID", "type": "VARCHAR(24)", "nullable": false},
+                {"name": "DATE", "type": "DATE", "nullable": false},
+                {"name": "IMPRESSIONS", "type": "NUMBER(12)", "nullable": false},
+                {"name": "CLICKS", "type": "NUMBER(10)", "nullable": false},
+                {"name": "CTR", "type": "NUMBER(5,4)", "nullable": false},
+                {"name": "CONVERSIONS", "type": "NUMBER(8)", "nullable": false},
+                {"name": "CONVERSION_RATE", "type": "NUMBER(5,4)", "nullable": false},
+                {"name": "COST", "type": "NUMBER(10,2)", "nullable": false},
+                {"name": "CPC", "type": "NUMBER(6,2)", "nullable": false},
+                {"name": "REVENUE", "type": "NUMBER(12,2)", "nullable": true},
+                {"name": "ROI", "type": "NUMBER(6,2)", "nullable": true}
+              ],
+              "row_count": 45789,
+              "bytes": 12345678,
+              "last_updated": "2023-10-16T09:30:45.000Z"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ML_DB",
+      "schemas": [
+        {
+          "name": "PREDICTIONS",
+          "tables": [
+            {
+              "name": "CUSTOMER_CHURN_PREDICTIONS",
+              "columns": [
+                {"name": "PREDICTION_ID", "type": "VARCHAR(36)", "nullable": false},
+                {"name": "CUSTOMER_ID", "type": "VARCHAR(36)", "nullable": false},
+                {"name": "PREDICTION_DATE", "type": "DATE", "nullable": false},
+                {"name": "CHURN_PROBABILITY", "type": "NUMBER(5,4)", "nullable": false},
+                {"name": "CHURN_RISK_LEVEL", "type": "VARCHAR(10)", "nullable": false},
+                {"name": "DAYS_SINCE_LAST_PURCHASE", "type": "NUMBER(5)", "nullable": false},
+                {"name": "LIFETIME_VALUE", "type": "NUMBER(12,2)", "nullable": false},
+                {"name": "MODEL_VERSION", "type": "VARCHAR(20)", "nullable": false},
+                {"name": "FEATURE_IMPORTANCE", "type": "VARIANT", "nullable": true}
+              ],
+              "row_count": 1453892,
+              "bytes": 234567890,
+              "last_updated": "2023-10-15T10:15:30.000Z"
+            },
+            {
+              "name": "PRODUCT_RECOMMENDATIONS",
+              "columns": [
+                {"name": "RECOMMENDATION_ID", "type": "VARCHAR(36)", "nullable": false},
+                {"name": "CUSTOMER_ID", "type": "VARCHAR(36)", "nullable": false},
+                {"name": "PRODUCT_ID", "type": "VARCHAR(24)", "nullable": false},
+                {"name": "RECOMMENDATION_DATE", "type": "DATE", "nullable": false},
+                {"name": "RECOMMENDATION_SCORE", "type": "NUMBER(5,4)", "nullable": false},
+                {"name": "RECOMMENDED_POSITION", "type": "NUMBER(3)", "nullable": false},
+                {"name": "REASON_CODE", "type": "VARCHAR(20)", "nullable": false},
+                {"name": "MODEL_VERSION", "type": "VARCHAR(20)", "nullable": false}
+              ],
+              "row_count": 14538920,
+              "bytes": 567890123,
+              "last_updated": "2023-10-16T07:45:22.000Z"
+            }
+          ]
+        },
+        {
+          "name": "FEATURES",
+          "tables": [
+            {
+              "name": "CUSTOMER_FEATURES",
+              "columns": [
+                {"name": "CUSTOMER_ID", "type": "VARCHAR(36)", "nullable": false},
+                {"name": "FEATURE_DATE", "type": "DATE", "nullable": false},
+                {"name": "PURCHASE_FREQUENCY_30D", "type": "NUMBER(5,2)", "nullable": false},
+                {"name": "PURCHASE_FREQUENCY_90D", "type": "NUMBER(5,2)", "nullable": false},
+                {"name": "PURCHASE_FREQUENCY_180D", "type": "NUMBER(5,2)", "nullable": false},
+                {"name": "AVG_ORDER_VALUE_30D", "type": "NUMBER(10,2)", "nullable": false},
+                {"name": "AVG_ORDER_VALUE_90D", "type": "NUMBER(10,2)", "nullable": false},
+                {"name": "AVG_ORDER_VALUE_180D", "type": "NUMBER(10,2)", "nullable": false},
+                {"name": "DAYS_SINCE_LAST_PURCHASE", "type": "NUMBER(5)", "nullable": false},
+                {"name": "PRODUCT_CATEGORIES_COUNT", "type": "NUMBER(3)", "nullable": false},
+                {"name": "TOP_PRODUCT_CATEGORY", "type": "VARCHAR(50)", "nullable": false},
+                {"name": "LIFETIME_SPEND", "type": "NUMBER(12,2)", "nullable": false},
+                {"name": "CUSTOMER_TENURE_DAYS", "type": "NUMBER(5)", "nullable": false},
+                {"name": "RETURNS_COUNT_30D", "type": "NUMBER(3)", "nullable": false},
+                {"name": "RETURNS_COUNT_90D", "type": "NUMBER(3)", "nullable": false},
+                {"name": "EMAIL_ENGAGEMENT_SCORE", "type": "NUMBER(5,4)", "nullable": true},
+                {"name": "PREFERRED_PAYMENT_METHOD", "type": "VARCHAR(16)", "nullable": false},
+                {"name": "FEATURE_VECTOR", "type": "ARRAY", "nullable": true}
+              ],
+              "row_count": 1453892,
+              "bytes": 789012345,
+              "last_updated": "2023-10-16T05:30:15.000Z"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+} 

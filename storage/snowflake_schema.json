@@ -1,0 +1,68 @@
+{
+  "database": "ANALYTICS",
+  "schemas": [
+    {
+      "name": "SALES",
+      "tables": [
+        {
+          "name": "CUSTOMER",
+          "columns": [
+            {"name": "CUSTOMER_ID", "type": "INTEGER", "description": "Unique customer identifier"},
+            {"name": "NAME", "type": "VARCHAR", "description": "Customer full name"},
+            {"name": "EMAIL", "type": "VARCHAR", "description": "Customer email address"},
+            {"name": "SIGNUP_DATE", "type": "DATE", "description": "Date when customer created account"},
+            {"name": "LAST_ORDER_DATE", "type": "DATE", "description": "Date of customer's most recent order"}
+          ]
+        },
+        {
+          "name": "ORDERS",
+          "columns": [
+            {"name": "ORDER_ID", "type": "INTEGER", "description": "Unique order identifier"},
+            {"name": "CUSTOMER_ID", "type": "INTEGER", "description": "Foreign key to CUSTOMER table"},
+            {"name": "ORDER_DATE", "type": "DATE", "description": "Date when order was placed"},
+            {"name": "TOTAL_AMOUNT", "type": "DECIMAL(10,2)", "description": "Total order amount in USD"},
+            {"name": "STATUS", "type": "VARCHAR", "description": "Current order status (pending, shipped, delivered, cancelled)"}
+          ]
+        },
+        {
+          "name": "ORDER_ITEMS",
+          "columns": [
+            {"name": "ITEM_ID", "type": "INTEGER", "description": "Unique order item identifier"},
+            {"name": "ORDER_ID", "type": "INTEGER", "description": "Foreign key to ORDERS table"},
+            {"name": "PRODUCT_ID", "type": "INTEGER", "description": "Foreign key to PRODUCTS table"},
+            {"name": "QUANTITY", "type": "INTEGER", "description": "Number of products ordered"},
+            {"name": "UNIT_PRICE", "type": "DECIMAL(10,2)", "description": "Price per unit in USD"},
+            {"name": "DISCOUNT", "type": "DECIMAL(5,2)", "description": "Discount percentage applied to this item"}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "INVENTORY",
+      "tables": [
+        {
+          "name": "PRODUCTS",
+          "columns": [
+            {"name": "PRODUCT_ID", "type": "INTEGER", "description": "Unique product identifier"},
+            {"name": "NAME", "type": "VARCHAR", "description": "Product name"},
+            {"name": "CATEGORY", "type": "VARCHAR", "description": "Product category"},
+            {"name": "PRICE", "type": "DECIMAL(10,2)", "description": "Current product price in USD"},
+            {"name": "STOCK_QUANTITY", "type": "INTEGER", "description": "Current inventory quantity"},
+            {"name": "REORDER_LEVEL", "type": "INTEGER", "description": "Inventory level that triggers reordering"}
+          ]
+        },
+        {
+          "name": "SUPPLIERS",
+          "columns": [
+            {"name": "SUPPLIER_ID", "type": "INTEGER", "description": "Unique supplier identifier"},
+            {"name": "NAME", "type": "VARCHAR", "description": "Supplier company name"},
+            {"name": "CONTACT_NAME", "type": "VARCHAR", "description": "Name of primary contact person"},
+            {"name": "EMAIL", "type": "VARCHAR", "description": "Contact email address"},
+            {"name": "PHONE", "type": "VARCHAR", "description": "Contact phone number"},
+            {"name": "COUNTRY", "type": "VARCHAR", "description": "Supplier country location"}
+          ]
+        }
+      ]
+    }
+  ]
+} 

@@ -1,75 +1,59 @@
-from enum import Enum
-from typing import Optional, List, Set, ClassVar
-from pydantic_settings import BaseSettings
-from pydantic import Field
+"""Application configuration."""
+
 import os
-from functools import lru_cache
+from enum import Enum
+from typing import Optional, Set, Dict, Any
+from pydantic_settings import BaseSettings
+from pathlib import Path
+
+# Import MCP configuration classes
+from mcp.database.config import DatabaseConfig
+from mcp.server.config import ServerConfig
+from mcp.storage.config import StorageConfig
 
 class ModelBackend(str, Enum):
-    """Supported model backends."""
-    LOCAL = "local"
+    """Types of model backends supported."""
     OPENAI = "openai"
-    AZURE_OPENAI = "azure_openai"
+    AZURE = "azure"
     ANTHROPIC = "anthropic"
     HUGGINGFACE = "huggingface"
     CUSTOM = "custom"
+    LOCAL = "local"
 
 class StorageBackend(str, Enum):
-    """Storage backend types"""
+    """Types of storage backends supported."""
     LOCAL = "local"
     AZURE = "azure"
+    S3 = "s3"
 
 class Settings(BaseSettings):
     """Application settings."""
-    
-    # Testing Configuration
-    TESTING: bool = False
-    TEST_DB_URL: str = "sqlite+aiosqlite:///:memory:"
-    
-    # Application Configuration
+    # Application
     APP_NAME: str = "MCP Server"
-    APP_DESCRIPTION: str = "Model Control Protocol Server"
-    APP_VERSION: str = "1.0.0"
-    APP_ENV: str = "development"
-    PRODUCTION: bool = False
+    DEBUG: bool = os.getenv("DEBUG", "False").lower() == "true"
+    TESTING: bool = os.getenv("TESTING", "False").lower() == "true"
     
-    # Server Configuration
-    PORT: int = Field(default=8000, env='APP_PORT')
-    HOST: str = Field(default="0.0.0.0", env='APP_HOST')
-    DEBUG: bool = Field(default=False, env='APP_DEBUG')
-    RELOAD: bool = Field(default=True, env='APP_RELOAD')
-    WORKERS: int = Field(default=1, env='APP_WORKERS')
-    ENVIRONMENT: str = "development"
-    BASE_DIR: str = os.path.join(os.getcwd(), 'data')
-    CORS_ORIGINS: List[str] = ["*"]
+    # Database settings
+    DB_HOST: str = os.getenv("DB_HOST", "localhost")
+    DB_PORT: str = os.getenv("DB_PORT", "5432")
+    DB_USER: str = os.getenv("DB_USER", "postgres")
+    DB_PASSWORD: str = os.getenv("DB_PASSWORD", "postgres")
+    DB_NAME: str = os.getenv("DB_NAME", "mcp")
+    DB_URL: Optional[str] = os.getenv("DATABASE_URL")
     
-    # Database Configuration
-    DB_USER: str = Field(default="postgres", env='DB_USER')
-    DB_PASSWORD: str = Field(default="postgres", env='DB_PASSWORD')
-    DB_HOST: str = Field(default="localhost", env='DB_HOST')
-    DB_PORT: int = Field(default=5432, env='DB_PORT')
-    DB_NAME: str = Field(default="mcp", env='DB_NAME')
+    # API configuration
+    API_PREFIX: str = "/api/v1"
     
-    # Security
-    SECRET_KEY: str = Field(default="dev_secret_key", description="Secret key for JWT encoding")
+    # API key settings
+    SECRET_KEY: str
+    API_KEY_EXPIRY_DAYS: int = 30
     ALGORITHM: str = "HS256"
     
-    # API Key settings
-    API_KEY_LENGTH: int = 32
-    API_KEY_PREFIX: str = "mcp"
-    DEFAULT_API_KEY_EXPIRY_DAYS: int = 30
-    API_KEY_EXPIRY_DAYS: int = Field(default=365, description="Number of days until API keys expire")
-    DEFAULT_RATE_LIMIT: str = "20/minute"
-    TEST_API_KEY: str = "test_key_dev_only"
-    API_KEYS: Set[str] = {"test_key", "dev_key"}
-    DEFAULT_PERMISSIONS: List[str] = ["read", "write", "execute"]
+    # Rate limiting
+    RATE_LIMIT: str = "20/minute"
+    RATE_LIMIT_WINDOW: int = 60  # Window in seconds
     
-    # Rate Limiting
-    RATE_LIMIT_CLEANUP_INTERVAL: int = 3600  # 1 hour in seconds
-    RATE_LIMIT_DEFAULT_LIMIT: int = 20
-    RATE_LIMIT_DEFAULT_WINDOW: str = "minute"
-    
-    # Cache
+    # Caching
     CACHE_TTL: int = 300  # 5 minutes
     
     # File Storage
@@ -121,12 +105,44 @@ class Settings(BaseSettings):
         extra = "allow"
 
     def get_db_url(self) -> str:
-        """Get database URL based on environment"""
-        if self.TESTING:
-            return self.TEST_DB_URL
+        """Get database URL from environment or construct from components."""
+        if self.DB_URL:
+            return self.DB_URL
+        
+        # Construct SQLAlchemy URL
         return f"postgresql+asyncpg://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
 
-@lru_cache()
+    def get_mcp_database_config(self) -> DatabaseConfig:
+        """Get MCP DatabaseConfig using environment variables"""
+        return DatabaseConfig(
+            url=self.get_db_url(),
+            echo=self.DEBUG
+            # MCP will read these from environment variables
+            # or we can pass them explicitly if needed
+        )
+    
+    def get_mcp_server_config(self) -> ServerConfig:
+        """Get MCP ServerConfig using environment variables"""
+        return ServerConfig(
+            name=self.APP_NAME,
+            version="1.0.0",
+            # Other server configuration options
+        )
+    
+    def get_mcp_storage_config(self) -> StorageConfig:
+        """Get MCP StorageConfig using environment variables"""
+        return StorageConfig(
+            # Storage configuration options
+            type=self.STORAGE_BACKEND.value,
+            # MCP will handle mapping the rest from env vars
+        )
+
+# Singleton pattern for settings
+_settings = None
+
 def get_settings() -> Settings:
-    """Get cached settings instance."""
-    return Settings()
+    """Get settings instance."""
+    global _settings
+    if _settings is None:
+        _settings = Settings()
+    return _settings

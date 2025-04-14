@@ -1,0 +1,65 @@
+{
+  "bucket": "data-analytics-bucket",
+  "files": [
+    {
+      "path": "sales/2023/q1_sales.csv",
+      "size": 2560000,
+      "last_modified": "2023-04-15T10:30:00Z",
+      "content_type": "text/csv"
+    },
+    {
+      "path": "sales/2023/q2_sales.csv",
+      "size": 2750000,
+      "last_modified": "2023-07-10T14:20:00Z",
+      "content_type": "text/csv"
+    },
+    {
+      "path": "sales/2023/q3_sales.csv",
+      "size": 2840000,
+      "last_modified": "2023-10-08T09:15:00Z",
+      "content_type": "text/csv"
+    },
+    {
+      "path": "sales/2023/q4_sales.csv",
+      "size": 3100000,
+      "last_modified": "2024-01-12T16:45:00Z",
+      "content_type": "text/csv"
+    },
+    {
+      "path": "marketing/campaign_results.xlsx",
+      "size": 4250000,
+      "last_modified": "2024-02-20T11:30:00Z",
+      "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    },
+    {
+      "path": "customer/customer_segments.parquet",
+      "size": 18500000,
+      "last_modified": "2024-03-05T08:45:00Z",
+      "content_type": "application/octet-stream"
+    },
+    {
+      "path": "reports/annual_report_2023.pdf",
+      "size": 8750000,
+      "last_modified": "2024-02-28T15:20:00Z",
+      "content_type": "application/pdf"
+    },
+    {
+      "path": "inventory/product_inventory.json",
+      "size": 1240000,
+      "last_modified": "2024-03-18T10:00:00Z",
+      "content_type": "application/json"
+    },
+    {
+      "path": "config/data_pipelines.yaml",
+      "size": 85000,
+      "last_modified": "2024-01-30T09:30:00Z",
+      "content_type": "text/yaml"
+    },
+    {
+      "path": "ml_models/customer_churn/model.pkl",
+      "size": 125000000,
+      "last_modified": "2024-03-10T14:15:00Z",
+      "content_type": "application/octet-stream"
+    }
+  ]
+} 

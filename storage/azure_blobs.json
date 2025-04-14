@@ -1,0 +1,258 @@
+{
+  "containers": [
+    {
+      "name": "ml-models",
+      "properties": {
+        "last_modified": "2023-02-10T09:15:30.000Z",
+        "lease_status": "unlocked",
+        "lease_state": "available"
+      },
+      "blobs": [
+        {
+          "name": "text-classification/bert-fine-tuned/model.onnx",
+          "properties": {
+            "creation_time": "2023-05-15T14:30:22.000Z",
+            "last_modified": "2023-05-15T14:30:22.000Z",
+            "content_length": 567890123,
+            "content_type": "application/octet-stream",
+            "content_md5": "Md5Hash1234567890abcdef",
+            "blob_type": "BlockBlob",
+            "lease_status": "unlocked",
+            "lease_state": "available",
+            "access_tier": "Hot"
+          }
+        },
+        {
+          "name": "text-classification/bert-fine-tuned/config.json",
+          "properties": {
+            "creation_time": "2023-05-15T14:30:25.000Z",
+            "last_modified": "2023-05-15T14:30:25.000Z",
+            "content_length": 7890,
+            "content_type": "application/json",
+            "content_md5": "Md5Hash2345678901bcdef",
+            "blob_type": "BlockBlob",
+            "lease_status": "unlocked",
+            "lease_state": "available",
+            "access_tier": "Hot"
+          }
+        },
+        {
+          "name": "text-classification/bert-fine-tuned/tokenizer.json",
+          "properties": {
+            "creation_time": "2023-05-15T14:30:28.000Z",
+            "last_modified": "2023-05-15T14:30:28.000Z",
+            "content_length": 12345678,
+            "content_type": "application/json",
+            "content_md5": "Md5Hash3456789012cdef",
+            "blob_type": "BlockBlob",
+            "lease_status": "unlocked",
+            "lease_state": "available",
+            "access_tier": "Hot"
+          }
+        },
+        {
+          "name": "image-segmentation/mask-rcnn/model.pb",
+          "properties": {
+            "creation_time": "2023-07-20T10:45:15.000Z",
+            "last_modified": "2023-07-20T10:45:15.000Z",
+            "content_length": 456789012,
+            "content_type": "application/octet-stream",
+            "content_md5": "Md5Hash4567890123def",
+            "blob_type": "BlockBlob",
+            "lease_status": "unlocked",
+            "lease_state": "available",
+            "access_tier": "Hot"
+          }
+        },
+        {
+          "name": "image-segmentation/mask-rcnn/config.json",
+          "properties": {
+            "creation_time": "2023-07-20T10:45:18.000Z",
+            "last_modified": "2023-07-20T10:45:18.000Z",
+            "content_length": 5678,
+            "content_type": "application/json",
+            "content_md5": "Md5Hash5678901234ef",
+            "blob_type": "BlockBlob",
+            "lease_status": "unlocked",
+            "lease_state": "available",
+            "access_tier": "Hot"
+          }
+        }
+      ]
+    },
+    {
+      "name": "datasets",
+      "properties": {
+        "last_modified": "2022-12-05T11:30:45.000Z",
+        "lease_status": "unlocked",
+        "lease_state": "available"
+      },
+      "blobs": [
+        {
+          "name": "customer-data/transactions_2023_q3.parquet",
+          "properties": {
+            "creation_time": "2023-10-02T08:15:30.000Z",
+            "last_modified": "2023-10-02T08:15:30.000Z",
+            "content_length": 3456789012,
+            "content_type": "application/octet-stream",
+            "content_md5": "Md5Hash6789012345f",
+            "blob_type": "BlockBlob",
+            "lease_status": "unlocked",
+            "lease_state": "available",
+            "access_tier": "Hot"
+          }
+        },
+        {
+          "name": "customer-data/customer_profiles.parquet",
+          "properties": {
+            "creation_time": "2023-09-15T13:40:25.000Z",
+            "last_modified": "2023-09-15T13:40:25.000Z",
+            "content_length": 987654321,
+            "content_type": "application/octet-stream",
+            "content_md5": "Md5Hash7890123456",
+            "blob_type": "BlockBlob",
+            "lease_status": "unlocked",
+            "lease_state": "available",
+            "access_tier": "Hot"
+          }
+        },
+        {
+          "name": "market-data/stock_prices_daily_2023.csv",
+          "properties": {
+            "creation_time": "2023-10-16T00:05:15.000Z",
+            "last_modified": "2023-10-16T00:05:15.000Z",
+            "content_length": 234567890,
+            "content_type": "text/csv",
+            "content_md5": "Md5Hash8901234567",
+            "blob_type": "BlockBlob",
+            "lease_status": "unlocked",
+            "lease_state": "available",
+            "access_tier": "Hot"
+          }
+        },
+        {
+          "name": "market-data/market_indices_daily_2023.csv",
+          "properties": {
+            "creation_time": "2023-10-16T00:06:30.000Z",
+            "last_modified": "2023-10-16T00:06:30.000Z",
+            "content_length": 45678901,
+            "content_type": "text/csv",
+            "content_md5": "Md5Hash9012345678",
+            "blob_type": "BlockBlob",
+            "lease_status": "unlocked",
+            "lease_state": "available",
+            "access_tier": "Hot"
+          }
+        },
+        {
+          "name": "product-data/catalog_exports/product_catalog_2023_10_15.json",
+          "properties": {
+            "creation_time": "2023-10-15T12:30:45.000Z",
+            "last_modified": "2023-10-15T12:30:45.000Z",
+            "content_length": 789012345,
+            "content_type": "application/json",
+            "content_md5": "Md5Hash0123456789",
+            "blob_type": "BlockBlob",
+            "lease_status": "unlocked",
+            "lease_state": "available",
+            "access_tier": "Hot"
+          }
+        }
+      ]
+    },
+    {
+      "name": "model-outputs",
+      "properties": {
+        "last_modified": "2023-05-22T14:20:10.000Z",
+        "lease_status": "unlocked",
+        "lease_state": "available"
+      },
+      "blobs": [
+        {
+          "name": "predictions/customer_churn/2023-10-15/predictions.parquet",
+          "properties": {
+            "creation_time": "2023-10-15T20:45:30.000Z",
+            "last_modified": "2023-10-15T20:45:30.000Z",
+            "content_length": 123456789,
+            "content_type": "application/octet-stream",
+            "content_md5": "Md5HashA123456789",
+            "blob_type": "BlockBlob",
+            "lease_status": "unlocked",
+            "lease_state": "available",
+            "access_tier": "Hot"
+          }
+        },
+        {
+          "name": "predictions/customer_churn/2023-10-15/metrics.json",
+          "properties": {
+            "creation_time": "2023-10-15T20:45:35.000Z",
+            "last_modified": "2023-10-15T20:45:35.000Z",
+            "content_length": 12345,
+            "content_type": "application/json",
+            "content_md5": "Md5HashB234567890",
+            "blob_type": "BlockBlob",
+            "lease_status": "unlocked",
+            "lease_state": "available",
+            "access_tier": "Hot"
+          }
+        },
+        {
+          "name": "predictions/customer_churn/2023-10-14/predictions.parquet",
+          "properties": {
+            "creation_time": "2023-10-14T20:45:15.000Z",
+            "last_modified": "2023-10-14T20:45:15.000Z",
+            "content_length": 122345678,
+            "content_type": "application/octet-stream",
+            "content_md5": "Md5HashC345678901",
+            "blob_type": "BlockBlob",
+            "lease_status": "unlocked",
+            "lease_state": "available",
+            "access_tier": "Hot"
+          }
+        },
+        {
+          "name": "predictions/customer_churn/2023-10-14/metrics.json",
+          "properties": {
+            "creation_time": "2023-10-14T20:45:20.000Z",
+            "last_modified": "2023-10-14T20:45:20.000Z",
+            "content_length": 12340,
+            "content_type": "application/json",
+            "content_md5": "Md5HashD456789012",
+            "blob_type": "BlockBlob",
+            "lease_status": "unlocked",
+            "lease_state": "available",
+            "access_tier": "Hot"
+          }
+        },
+        {
+          "name": "predictions/product_recommendation/2023-10-15/recommendations.parquet",
+          "properties": {
+            "creation_time": "2023-10-15T21:30:45.000Z",
+            "last_modified": "2023-10-15T21:30:45.000Z",
+            "content_length": 345678901,
+            "content_type": "application/octet-stream",
+            "content_md5": "Md5HashE567890123",
+            "blob_type": "BlockBlob",
+            "lease_status": "unlocked",
+            "lease_state": "available",
+            "access_tier": "Hot"
+          }
+        },
+        {
+          "name": "predictions/product_recommendation/2023-10-15/metrics.json",
+          "properties": {
+            "creation_time": "2023-10-15T21:30:50.000Z",
+            "last_modified": "2023-10-15T21:30:50.000Z",
+            "content_length": 23456,
+            "content_type": "application/json",
+            "content_md5": "Md5HashF678901234",
+            "blob_type": "BlockBlob",
+            "lease_status": "unlocked",
+            "lease_state": "available",
+            "access_tier": "Hot"
+          }
+        }
+      ]
+    }
+  ]
+} 

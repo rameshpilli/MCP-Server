@@ -1,130 +1,84 @@
-from sqlalchemy import Column, String, Integer, Float, DateTime, JSON, Enum as SQLEnum, Boolean, ForeignKey, MetaData, Table
-from sqlalchemy.orm import relationship
+"""Database models for compatibility with MCP.
+
+This module defines models that maintain compatibility
+with the existing application while utilizing the MCP database.
+"""
+
 from datetime import datetime, UTC
-from app.core.config import ModelBackend
+from typing import Dict, Any, List, Optional
 from app.core.database import Base
-from app.core.enums import DataSourceType
+from app.core.config import ModelBackend
 
-# Create metadata with naming convention
-convention = {
-    "ix": "ix_%(column_0_label)s",
-    "uq": "uq_%(table_name)s_%(column_0_name)s",
-    "ck": "ck_%(table_name)s_%(constraint_name)s",
-    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
-    "pk": "pk_%(table_name)s"
-}
-
-naming_metadata = MetaData(naming_convention=convention)
-Base.metadata = naming_metadata
-
-# Association table for DataSource-APIKey many-to-many relationship
-datasource_permissions = Table(
-    'datasource_permissions',
-    Base.metadata,
-    Column('datasource_id', Integer, ForeignKey('data_sources.id'), primary_key=True),
-    Column('api_key_id', Integer, ForeignKey('api_keys.id'), primary_key=True),
-    Column('created_at', DateTime, default=datetime.utcnow),
-    Column('permissions', JSON, default=["read"])
-)
-
-class ModelRecord(Base):
-    """Model registration record."""
-    __tablename__ = "models"
-
-    id = Column(Integer, primary_key=True)
-    model_id = Column(String, unique=True, index=True)
-    name = Column(String)
-    version = Column(String)
-    backend = Column(SQLEnum(ModelBackend))
-    api_base = Column(String)
-    description = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    config = Column(JSON, default=dict)
-    is_active = Column(Boolean, default=True)
+class ModelRecord:
+    """Model record for storing model information."""
     
-    # Add fields for status tracking
-    total_requests = Column(Integer, default=0)
-    successful_requests = Column(Integer, default=0)
-    failed_requests = Column(Integer, default=0)
-    total_tokens = Column(Integer, default=0)  # Total tokens processed by the model
-    last_used = Column(DateTime, nullable=True)
-    average_latency = Column(Float, default=0.0)
+    def __init__(self, model_id, name, description=None, version=None, api_base=None, 
+                 backend=None, config=None, is_active=True, total_requests=0,
+                 successful_requests=0, failed_requests=0, total_tokens=0, average_latency=0.0,
+                 created_at=None, updated_at=None, last_used=None):
+        self.model_id = model_id
+        self.name = name
+        self.description = description
+        self.version = version
+        self.api_base = api_base
+        self.backend = backend
+        self.config = config or {}
+        self.is_active = is_active
+        
+        # Metrics
+        self.total_requests = total_requests
+        self.successful_requests = successful_requests
+        self.failed_requests = failed_requests
+        self.total_tokens = total_tokens
+        self.average_latency = average_latency
+        
+        # Timestamps
+        self.created_at = created_at or datetime.now(UTC)
+        self.updated_at = updated_at or datetime.now(UTC)
+        self.last_used = last_used
 
-    # Relationships
-    usage_logs = relationship("ModelUsageLog", back_populates="model")
-
-class APIKey(Base):
-    """Database model for API keys"""
-    __tablename__ = "api_keys"
-
-    id = Column(Integer, primary_key=True)
-    key_id = Column(String(255), unique=True, nullable=False)
-    key = Column(String(255), unique=True, nullable=False)
-    owner = Column(String(255), nullable=False)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
-    expires_at = Column(DateTime(timezone=True), nullable=True)
-    permissions = Column(JSON, default=["read"])
-    is_active = Column(Boolean, default=True)
-    last_used = Column(DateTime(timezone=True), nullable=True)
-    usage_count = Column(Integer, default=0)
-    rate_limit = Column(String(50), default="20/minute")
+class APIKey:
+    """API key model for authentication."""
     
-    # Relationships
-    usage_logs = relationship("ModelUsageLog", back_populates="api_key")
-    quotas = relationship("UsageQuota", backref="api_key")
-    data_sources = relationship("DataSource", secondary=datasource_permissions, back_populates="api_keys")
+    def __init__(self, id, key, owner, created_at=None, expires_at=None, 
+                 rate_limit=None, permissions=None):
+        self.id = id
+        self.key = key
+        self.owner = owner
+        self.created_at = created_at or datetime.now(UTC)
+        self.expires_at = expires_at
+        self.rate_limit = rate_limit  # Format: "100/minute", "1000/day", etc.
+        self.permissions = permissions or ["model:access"]
 
-class ModelUsageLog(Base):
-    """Model usage log."""
-    __tablename__ = "model_usage_logs"
+class DataSource:
+    """Data source model for external data connections."""
+    
+    def __init__(self, id, name, source_type, description=None, config=None, 
+                 is_active=True, is_healthy=True, created_at=None, last_health_check=None):
+        self.id = id
+        self.name = name
+        self.source_type = source_type  # "snowflake", "azure_blob", "s3", etc.
+        self.description = description
+        self.config = config or {}
+        self.is_active = is_active
+        self.is_healthy = is_healthy
+        self.created_at = created_at or datetime.now(UTC)
+        self.last_health_check = last_health_check
 
-    id = Column(Integer, primary_key=True)
-    model_id = Column(String, ForeignKey("models.model_id"))
-    api_key_id = Column(Integer, ForeignKey('api_keys.id'), nullable=False)
-    timestamp = Column(DateTime, default=datetime.utcnow)
-    request_type = Column(String)
-    input_tokens = Column(Integer)
-    output_tokens = Column(Integer)
-    latency = Column(Float)  # in seconds
-    status = Column(String)
-    error = Column(String, nullable=True)
-    request_metadata = Column(JSON, default=dict)
-
-    # Relationships
-    model = relationship("ModelRecord", back_populates="usage_logs")
-    api_key = relationship("APIKey", back_populates="usage_logs")
-
-class UsageQuota(Base):
-    """Database model for usage quotas"""
-    __tablename__ = 'usage_quotas'
-
-    id = Column(Integer, primary_key=True)
-    api_key_id = Column(Integer, ForeignKey('api_keys.id'), nullable=False)
-    quota_type = Column(String(50))  # e.g., 'daily', 'monthly'
-    max_requests = Column(Integer)
-    max_tokens = Column(Integer)
-    max_cost = Column(Float)
-    reset_frequency = Column(String(50))  # e.g., 'daily', 'monthly'
-    last_reset = Column(DateTime, default=datetime.utcnow)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-class DataSource(Base):
-    """Database model for data sources"""
-    __tablename__ = 'data_sources'
-
-    id = Column(Integer, primary_key=True)
-    name = Column(String(255), unique=True, nullable=False)
-    source_type = Column(SQLEnum(DataSourceType))
-    connection_string = Column(String, nullable=True)
-    config = Column(JSON, default=dict)
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    last_health_check = Column(DateTime, nullable=True)
-    is_healthy = Column(Boolean, default=True)
-    error_message = Column(String, nullable=True)
-
-    # Relationships
-    api_keys = relationship("APIKey", secondary=datasource_permissions, back_populates="data_sources") 
+class QueryHistory:
+    """Query history model for tracking data queries."""
+    
+    def __init__(self, id, api_key, natural_query=None, sql_query=None, data_source_id=None,
+                 execution_time=None, row_count=None, status=None, error=None, 
+                 response=None, timestamp=None):
+        self.id = id
+        self.api_key = api_key
+        self.natural_query = natural_query
+        self.sql_query = sql_query
+        self.data_source_id = data_source_id
+        self.execution_time = execution_time  # In seconds
+        self.row_count = row_count
+        self.status = status  # "success", "error", "timeout", etc.
+        self.error = error
+        self.response = response
+        self.timestamp = timestamp or datetime.now(UTC) 

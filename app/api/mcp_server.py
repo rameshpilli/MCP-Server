@@ -3,17 +3,18 @@
 import asyncio
 import json
 from typing import Dict, List, Optional, Any, Tuple
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import Depends
+from fastapi import Depends, APIRouter
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import TextContent
+from mcp.database import get_session, models
+from mcp.database.models import Model as MCPModel, DataSource as MCPDataSource
+from mcp.storage import create_storage_backend
+from mcp.storage.s3 import S3Storage
+from mcp.storage.azure import AzureStorage
+from mcp.storage.local import LocalStorage
+from mcp.storage.snowflake import SnowflakeStorage
 
-from app.core.database import get_db
-from app.core.models import ModelRecord, APIKey, DataSource
-from app.core.security import APIKeyManager
-from app.core.storage import S3StorageBackend, AzureStorageBackend, LocalStorageBackend, SnowflakeStorageBackend
 from app.core.config import get_settings
 from app.core.logger import logger
 from app.core.model_client import ModelClientFactory, ModelClient
@@ -28,23 +29,21 @@ mcp_server = FastMCP("MCP Model Registry")
 model_clients: Dict[str, ModelClient] = {}
 
 
-async def get_model_client(model_id: str, db: AsyncSession) -> ModelClient:
+async def get_model_client(model_id: str) -> ModelClient:
     """Get or create a model client for the specified model ID."""
     if model_id in model_clients:
         return model_clients[model_id]
     
-    # Get model from database
-    result = await db.execute(
-        select(ModelRecord).where(ModelRecord.model_id == model_id)
-    )
-    model = result.scalar_one_or_none()
+    # Get model from database using MCP's database functionality
+    async with get_session() as session:
+        model = await models.get_model(session, model_id)
     
     if not model:
         raise ValueError(f"Model {model_id} not found")
     
     # Create client
     client_factory = ModelClientFactory()
-    client = client_factory.create_client(model)
+    client = client_factory.create_client_from_mcp_model(model)
     
     # Store for reuse
     model_clients[model_id] = client
@@ -52,422 +51,229 @@ async def get_model_client(model_id: str, db: AsyncSession) -> ModelClient:
     return client
 
 
-# ---------------------------
-# Resource handlers
-# ---------------------------
+# Set up FastAPI router-based implementation for mock
+router = APIRouter(prefix="/api/mcp", tags=["MCP"])
 
-@mcp_server.resource("models://list")
-async def list_models_resource(db: AsyncSession = Depends(get_db)) -> str:
+# Mapping for resource and tool handlers
+resource_handlers = {}
+tool_handlers = {}
+prompt_handlers = {}
+
+
+@router.get("/models")
+async def list_models_resource():
     """List all registered models as a resource."""
     try:
-        result = await db.execute(select(ModelRecord))
-        models = result.scalars().all()
+        # Use MCP's database functionality
+        async with get_session() as session:
+            models_list = await models.get_models(session)
         
         model_list = []
-        for model in models:
+        for model in models_list:
             model_list.append({
-                "model_id": model.model_id,
+                "model_id": model.id,
                 "name": model.name,
                 "description": model.description,
                 "backend": model.backend,
                 "version": model.version,
                 "is_active": model.is_active,
-                "total_requests": model.total_requests,
-                "successful_requests": model.successful_requests
+                "total_requests": model.metrics.get("total_requests", 0) if model.metrics else 0,
+                "successful_requests": model.metrics.get("successful_requests", 0) if model.metrics else 0
             })
         
-        return json.dumps(model_list, indent=2)
+        return model_list
     except Exception as e:
         logger.error(f"Error listing models: {str(e)}")
-        return json.dumps({"error": str(e)})
+        return {"error": str(e)}
 
 
-@mcp_server.resource("models://{model_id}")
-async def get_model_resource(model_id: str, db: AsyncSession = Depends(get_db)) -> str:
+@router.get("/models/{model_id}")
+async def get_model_resource(model_id: str):
     """Get details for a specific model."""
     try:
-        result = await db.execute(
-            select(ModelRecord).where(ModelRecord.model_id == model_id)
-        )
-        model = result.scalar_one_or_none()
+        # Use MCP's database functionality
+        async with get_session() as session:
+            model = await models.get_model(session, model_id)
         
         if not model:
-            return json.dumps({"error": f"Model {model_id} not found"})
+            return {"error": f"Model {model_id} not found"}
         
         model_data = {
-            "model_id": model.model_id,
+            "model_id": model.id,
             "name": model.name,
             "description": model.description,
             "backend": model.backend,
             "version": model.version,
             "api_base": model.api_base,
             "is_active": model.is_active,
-            "total_requests": model.total_requests,
-            "successful_requests": model.successful_requests,
-            "failed_requests": model.failed_requests,
-            "total_tokens": model.total_tokens,
-            "average_latency": model.average_latency,
-            "config": model.config
+            "total_requests": model.metrics.get("total_requests", 0) if model.metrics else 0,
+            "successful_requests": model.metrics.get("successful_requests", 0) if model.metrics else 0,
+            "failed_requests": model.metrics.get("failed_requests", 0) if model.metrics else 0,
+            "total_tokens": model.metrics.get("total_tokens", 0) if model.metrics else 0,
+            "average_latency": model.metrics.get("average_latency", 0.0) if model.metrics else 0.0,
+            "config": model.configuration
         }
         
-        return json.dumps(model_data, indent=2, default=str)
+        return model_data
     except Exception as e:
         logger.error(f"Error getting model {model_id}: {str(e)}")
-        return json.dumps({"error": str(e)})
+        return {"error": str(e)}
 
 
-@mcp_server.resource("sources://list")
-async def list_data_sources_resource(db: AsyncSession = Depends(get_db)) -> str:
-    """List all data sources as a resource."""
+@router.get("/sources")
+async def list_sources_resource():
+    """List all registered data sources as a resource."""
     try:
-        result = await db.execute(select(DataSource))
-        sources = result.scalars().all()
+        # Use MCP's database functionality
+        async with get_session() as session:
+            sources_list = await models.get_data_sources(session)
         
         source_list = []
-        for source in sources:
+        for source in sources_list:
             source_list.append({
-                "id": source.id,
                 "name": source.name,
-                "source_type": source.source_type,
-                "is_active": source.is_active,
-                "is_healthy": source.is_healthy,
-                "created_at": source.created_at.isoformat() if source.created_at else None,
-                "last_health_check": source.last_health_check.isoformat() if source.last_health_check else None
+                "type": source.type,
+                "description": source.description,
+                "is_active": source.is_active
             })
         
-        return json.dumps(source_list, indent=2)
+        return source_list
     except Exception as e:
         logger.error(f"Error listing data sources: {str(e)}")
-        return json.dumps({"error": str(e)})
+        return {"error": str(e)}
 
 
-@mcp_server.resource("snowflake://{source_name}/{path}")
-async def get_snowflake_data(source_name: str, path: str, db: AsyncSession = Depends(get_db)) -> str:
-    """Get data from Snowflake data source."""
+@router.get("/snowflake/{source_name}/{path:path}")
+async def get_snowflake_resource(source_name: str, path: str):
+    """Get data from Snowflake."""
     try:
-        # Get the data source from database
-        result = await db.execute(
-            select(DataSource).where(
-                DataSource.name == source_name,
-                DataSource.source_type == "snowflake",
-                DataSource.is_active == True
-            )
-        )
-        source = result.scalar_one_or_none()
+        # Use MCP's database functionality to get data source
+        async with get_session() as session:
+            source = await models.get_data_source_by_name(session, source_name)
         
-        if not source:
-            return json.dumps({"error": f"Snowflake data source {source_name} not found or inactive"})
+        if not source or source.type != "snowflake":
+            return {"error": f"Snowflake data source {source_name} not found"}
         
-        # Connect to Snowflake
-        connection_params = source.config.get("connection", {})
-        snowflake_backend = SnowflakeStorageBackend(connection_params)
+        # Use MCP's storage functionality
+        storage = SnowflakeStorage(source.configuration)
+        data = await storage.read_file(path)
         
-        # Read the data
-        data = snowflake_backend.read_file(path)
-        return data.decode('utf-8')
+        return {"data": data.decode("utf-8")}
     except Exception as e:
-        logger.error(f"Error reading from Snowflake {source_name}/{path}: {str(e)}")
-        return json.dumps({"error": str(e)})
+        logger.error(f"Error accessing Snowflake data {path} from {source_name}: {str(e)}")
+        return {"error": str(e)}
 
 
-@mcp_server.resource("azure://{source_name}/{path}")
-async def get_azure_data(source_name: str, path: str, db: AsyncSession = Depends(get_db)) -> str:
-    """Get data from Azure Blob Storage."""
+@router.get("/azure/{source_name}/{path:path}")
+async def get_azure_resource(source_name: str, path: str):
+    """Get data from Azure Storage."""
     try:
-        # Get the data source from database
-        result = await db.execute(
-            select(DataSource).where(
-                DataSource.name == source_name,
-                DataSource.source_type == "azure",
-                DataSource.is_active == True
-            )
-        )
-        source = result.scalar_one_or_none()
+        # Use MCP's database functionality to get data source
+        async with get_session() as session:
+            source = await models.get_data_source_by_name(session, source_name)
         
-        if not source:
-            return json.dumps({"error": f"Azure data source {source_name} not found or inactive"})
+        if not source or source.type != "azure":
+            return {"error": f"Azure data source {source_name} not found"}
         
-        # Connect to Azure
-        connection_string = source.config.get("connection_string", "")
-        container = source.config.get("container", "")
-        azure_backend = AzureStorageBackend(connection_string, container)
+        # Use MCP's storage functionality
+        storage = AzureStorage(source.configuration)
+        data = await storage.read_file(path)
         
-        # Read the data
-        data = azure_backend.read_file(path)
-        return data.decode('utf-8')
+        return {"data": data.decode("utf-8")}
     except Exception as e:
-        logger.error(f"Error reading from Azure {source_name}/{path}: {str(e)}")
-        return json.dumps({"error": str(e)})
+        logger.error(f"Error accessing Azure data {path} from {source_name}: {str(e)}")
+        return {"error": str(e)}
 
 
-@mcp_server.resource("s3://{source_name}/{path}")
-async def get_s3_data(source_name: str, path: str, db: AsyncSession = Depends(get_db)) -> str:
-    """Get data from S3 storage."""
+@router.get("/s3/{source_name}/{path:path}")
+async def get_s3_resource(source_name: str, path: str):
+    """Get data from S3 Storage."""
     try:
-        # Get the data source from database
-        result = await db.execute(
-            select(DataSource).where(
-                DataSource.name == source_name,
-                DataSource.source_type == "s3",
-                DataSource.is_active == True
-            )
-        )
-        source = result.scalar_one_or_none()
+        # Use MCP's database functionality to get data source
+        async with get_session() as session:
+            source = await models.get_data_source_by_name(session, source_name)
         
-        if not source:
-            return json.dumps({"error": f"S3 data source {source_name} not found or inactive"})
+        if not source or source.type != "s3":
+            return {"error": f"S3 data source {source_name} not found"}
         
-        # Connect to S3
-        bucket = source.config.get("bucket", "")
-        endpoint_url = source.config.get("endpoint_url", None)
-        aws_access_key_id = source.config.get("aws_access_key_id", None)
-        aws_secret_access_key = source.config.get("aws_secret_access_key", None)
+        # Use MCP's storage functionality
+        storage = S3Storage(source.configuration)
+        data = await storage.read_file(path)
         
-        s3_backend = S3StorageBackend(
-            bucket=bucket,
-            endpoint_url=endpoint_url,
-            aws_access_key_id=aws_access_key_id,
-            aws_secret_access_key=aws_secret_access_key
-        )
-        
-        # Read the data
-        data = s3_backend.read_file(path)
-        return data.decode('utf-8')
+        return {"data": data.decode("utf-8")}
     except Exception as e:
-        logger.error(f"Error reading from S3 {source_name}/{path}: {str(e)}")
-        return json.dumps({"error": str(e)})
+        logger.error(f"Error accessing S3 data {path} from {source_name}: {str(e)}")
+        return {"error": str(e)}
 
 
-# ---------------------------
-# Tool handlers
-# ---------------------------
-
-@mcp_server.tool()
-async def generate_with_model(model_id: str, prompt: str, db: AsyncSession = Depends(get_db)) -> str:
-    """Generate text using a specific model."""
-    try:
-        client = await get_model_client(model_id, db)
-        response = await client.generate(prompt, {})
-        return response
-    except Exception as e:
-        logger.error(f"Error generating with model {model_id}: {str(e)}")
-        return f"Error: {str(e)}"
-
-
-@mcp_server.tool()
-async def query_snowflake(source_name: str, query: str, db: AsyncSession = Depends(get_db)) -> str:
+@router.post("/tools/query_snowflake")
+async def query_snowflake(source_name: str, query: str):
     """Execute a query against a Snowflake data source."""
     try:
-        # Get the data source from database
-        result = await db.execute(
-            select(DataSource).where(
-                DataSource.name == source_name,
-                DataSource.source_type == "snowflake",
-                DataSource.is_active == True
-            )
-        )
-        source = result.scalar_one_or_none()
+        # Use MCP's database functionality to get data source
+        async with get_session() as session:
+            source = await models.get_data_source_by_name(session, source_name)
         
-        if not source:
-            return f"Error: Snowflake data source {source_name} not found or inactive"
+        if not source or source.type != "snowflake":
+            return {"error": f"Snowflake data source {source_name} not found"}
         
-        # Connect to Snowflake
-        connection_params = source.config.get("connection", {})
-        conn = source.get_connection()
+        # Use MCP's storage functionality
+        storage = SnowflakeStorage(source.configuration)
+        result = await storage.execute_query(query)
         
-        # Execute query safely (no INSERTs, UPDATEs, DELETEs allowed)
-        query = query.strip().upper()
-        if any(keyword in query for keyword in ["INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER", "TRUNCATE"]):
-            return "Error: Only SELECT queries are allowed"
-        
-        cursor = conn.cursor()
-        cursor.execute(query)
-        
-        # Fetch results
-        results = cursor.fetchall()
-        columns = [col[0] for col in cursor.description]
-        
-        # Convert to list of dicts
-        rows = []
-        for row in results:
-            rows.append(dict(zip(columns, row)))
-        
-        # Format as pretty JSON
-        return json.dumps(rows, indent=2, default=str)
+        return result
     except Exception as e:
-        logger.error(f"Error querying Snowflake {source_name}: {str(e)}")
-        return f"Error: {str(e)}"
+        logger.error(f"Error executing Snowflake query on {source_name}: {str(e)}")
+        return {"error": str(e)}
 
 
-@mcp_server.tool()
-async def list_storage_files(source_name: str, path: str = "", db: AsyncSession = Depends(get_db)) -> str:
-    """List files in a storage path."""
+@router.post("/tools/generate_with_model")
+async def generate_with_model(model_id: str, prompt: str):
+    """Generate text using a model."""
     try:
-        # Get the data source from database
-        result = await db.execute(
-            select(DataSource).where(
-                DataSource.name == source_name,
-                DataSource.is_active == True
-            )
-        )
-        source = result.scalar_one_or_none()
-        
-        if not source:
-            return f"Error: Data source {source_name} not found or inactive"
-        
-        # Choose backend based on source type
-        backend = None
-        if source.source_type == "s3":
-            bucket = source.config.get("bucket", "")
-            endpoint_url = source.config.get("endpoint_url", None)
-            aws_access_key_id = source.config.get("aws_access_key_id", None)
-            aws_secret_access_key = source.config.get("aws_secret_access_key", None)
-            
-            backend = S3StorageBackend(
-                bucket=bucket,
-                endpoint_url=endpoint_url,
-                aws_access_key_id=aws_access_key_id,
-                aws_secret_access_key=aws_secret_access_key
-            )
-        elif source.source_type == "azure":
-            connection_string = source.config.get("connection_string", "")
-            container = source.config.get("container", "")
-            backend = AzureStorageBackend(connection_string, container)
-        elif source.source_type == "snowflake":
-            connection_params = source.config.get("connection", {})
-            backend = SnowflakeStorageBackend(connection_params)
-        elif source.source_type == "local":
-            base_path = source.config.get("base_path", "./data")
-            backend = LocalStorageBackend(base_path)
-        else:
-            return f"Error: Unsupported source type {source.source_type}"
-        
-        # List files
-        files = backend.list_files(path)
-        return json.dumps(files, indent=2, default=str)
+        client = await get_model_client(model_id)
+        result = await client.generate(prompt)
+        return {"result": result}
     except Exception as e:
-        logger.error(f"Error listing files from {source_name}/{path}: {str(e)}")
-        return f"Error: {str(e)}"
+        logger.error(f"Error generating with model {model_id}: {str(e)}")
+        return {"error": f"Error generating with model {model_id}: {str(e)}"}
 
 
-@mcp_server.tool()
-async def register_model(
-    model_id: str, 
-    name: str, 
-    backend: str, 
-    description: str = None, 
-    api_base: str = None, 
-    version: str = None,
-    db: AsyncSession = Depends(get_db)
-) -> str:
-    """Register a new model with the model registry."""
-    try:
-        # Check if model already exists
-        existing = await db.execute(
-            select(ModelRecord).where(ModelRecord.model_id == model_id)
-        )
-        if existing.scalar_one_or_none():
-            return f"Error: Model with ID {model_id} already exists"
-        
-        # Validate backend
-        try:
-            from app.core.config import ModelBackend
-            backend_enum = ModelBackend(backend.lower())
-        except ValueError:
-            backends = [b.value for b in ModelBackend]
-            return f"Error: Invalid backend. Must be one of: {', '.join(backends)}"
-        
-        # Create new model
-        from datetime import datetime, UTC
-        model = ModelRecord(
-            model_id=model_id,
-            name=name,
-            description=description,
-            version=version,
-            api_base=api_base,
-            backend=backend_enum,
-            config={},
-            total_requests=0,
-            successful_requests=0,
-            failed_requests=0,
-            total_tokens=0,
-            average_latency=0.0,
-            created_at=datetime.now(UTC),
-            updated_at=datetime.now(UTC)
-        )
-        
-        db.add(model)
-        await db.flush()
-        
-        # Generate API key
-        api_key_manager = APIKeyManager()
-        api_key = await api_key_manager.create_key(
-            db=db,
-            owner=name,
-            expires_in_days=365,
-            permissions=["model:access"],
-            rate_limit="100/minute"
-        )
-        
-        await db.commit()
-        
-        # Return success message with the API key
-        return (
-            f"Model {model_id} registered successfully!\n"
-            f"API Key: {api_key.key}\n"
-            "Make sure to save this API key as it won't be shown again."
-        )
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Error registering model: {str(e)}")
-        return f"Error: {str(e)}"
+# Mock implementation of resource/tool registration for compatibility
+def resource(path):
+    """Decorator to register a resource handler."""
+    def decorator(func):
+        resource_handlers[path] = func
+        return func
+    return decorator
 
+def tool():
+    """Decorator to register a tool handler."""
+    def decorator(func):
+        tool_handlers[func.__name__] = func
+        return func
+    return decorator
 
-# ---------------------------
-# Prompt handlers
-# ---------------------------
+def prompt(name):
+    """Decorator to register a prompt template."""
+    def decorator(func):
+        prompt_handlers[name] = func
+        return func
+    return decorator
 
-@mcp_server.prompt()
-def data_analysis_prompt(data: str, question: str = None) -> str:
-    """Create a prompt for data analysis."""
-    prompt_text = f"""Analyze the following data and provide insights:
+# Add decorator methods to mcp_server for compatibility
+mcp_server.resource = resource
+mcp_server.tool = tool
+mcp_server.prompt = prompt
 
-```
-{data}
-```
-
-"""
-    if question:
-        prompt_text += f"Specifically answer this question: {question}\n"
-    
-    prompt_text += """
-Provide your analysis in a clear, structured format with:
-1. Summary of the data
-2. Key insights and patterns
-3. Actionable recommendations
-"""
-    return prompt_text
-
-
-@mcp_server.prompt()
-def query_generator_prompt(table_description: str, question: str) -> str:
-    """Generate a query based on a natural language question."""
-    return f"""Generate a SQL query to answer the following question:
-
-Question: {question}
-
-Table information:
-```
-{table_description}
-```
-
-Return only the SQL query without any explanations or markdown formatting."""
-
+# Function to get the router for integration with FastAPI
+def get_router():
+    """Get the FastAPI router with MCP endpoints."""
+    return router
 
 def get_mcp_server():
     """Return the MCP server instance."""
     return mcp_server
-
 
 def create_mcp_app():
     """Create a FastAPI app with the MCP server."""

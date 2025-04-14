@@ -1,0 +1,17 @@
+[
+  {
+    "id": "test-snowflake-1",
+    "name": "Test Snowflake",
+    "type": "snowflake",
+    "description": "A test Snowflake data source",
+    "configuration": {
+      "account": "your-account",
+      "user": "your-user",
+      "password": "your-password",
+      "warehouse": "your-warehouse",
+      "database": "your-database",
+      "schema": "your-schema"
+    },
+    "is_active": true
+  }
+]
