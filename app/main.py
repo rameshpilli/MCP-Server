@@ -5,6 +5,8 @@ from datetime import datetime
 from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.routing import Mount
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import JSONResponse, HTMLResponse
@@ -22,6 +24,9 @@ from app.core.auth import api_key_manager
 
 # Add LLM UI router
 from app.api.llm_ui import router as llm_ui_router
+
+# Add MCP server
+from app.api.mcp_server import mcp_server, create_mcp_app
 
 settings = get_settings()
 startup_validator = StartupValidator(config=settings)
@@ -55,6 +60,8 @@ if not index_html.exists():
             <h1>Welcome to Model Context Protocol</h1>
             <p>A platform for managing and controlling ML model deployments.</p>
             <p>Visit <a href="/api/docs">API documentation</a> to learn more.</p>
+            <p>Or check out the <a href="/llm/ui">LLM Dashboard</a>.</p>
+            <p>For MCP clients, connect to <code>/mcp</code> endpoint.</p>
         </div>
     </body>
     </html>
@@ -139,10 +146,14 @@ app.include_router(models.router, prefix="/api/models", tags=["models"])
 # Add LLM UI router
 app.include_router(llm_ui_router)
 
+# Mount MCP server as a sub-application
+mcp_app = create_mcp_app()
+app.router.routes.append(Mount("/mcp", app=mcp_app))
+
 # Add API key middleware only for API routes
 app.add_middleware(
     APIKeyMiddleware,
-    exclude_paths=["/llm/ui", "/llm/register", "/llm/datasources"]
+    exclude_paths=["/llm/ui", "/llm/register", "/llm/datasources", "/mcp"]
 )
 
 @app.get("/", response_class=HTMLResponse)

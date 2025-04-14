@@ -1,338 +1,150 @@
-# Model Context Protocol (MCP)
+# Model Context Protocol (MCP) Server
 
-MCP is a platform that enables secure access to enterprise data sources through custom ML models. It provides a standardized way to connect models with various data sources while maintaining security and monitoring usage.
+A unified platform for managing models and data sources through the Model Context Protocol.
 
-## Core Features
+## Features
 
-- **Data Source Access**: Connect to enterprise databases, Azure Storage, and Snowflake
-- **Access Control**: Fine-grained permissions for data access
-- **Usage Monitoring**: Track and monitor model usage and data access
-- **Security**: API key management and audit logging
+- **Custom Model Registry**: Register and manage multiple LLM models
+- **Standardized MCP Interface**: Connect your models to applications using MCP
+- **Data Source Integration**: Connect to Snowflake, Azure Storage, and S3
+- **Web UI**: Manage models through a web interface
+- **API Key Management**: Control access to your models
 
-## Project Structure
+## Installation
 
-```
-mcp/
-├── app/                    # Core application code
-│   ├── api/               # API endpoints
-│   ├── core/              # Core functionality
-│   ├── models/            # Database models
-│   └── schemas/           # Pydantic schemas
-├── tests/                 # Test files
-├── .env                   # Environment variables
-├── .env.example          # Example environment setup
-├── conftest.py           # Test configuration
-├── main.py               # Application entry point
-├── requirements.txt      # Project dependencies
-└── README.md            # Project documentation
-```
-
-## Setup
-
-1. Create a virtual environment:
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/yourusername/MCP.git
+   cd MCP
+   ```
 
 2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. Set up environment variables:
+   ```bash
+   cp .env.example .env
+   # Edit .env with your configuration
+   ```
+
+4. Initialize the database:
+   ```bash
+   alembic upgrade head
+   ```
+
+## Usage
+
+### Running the Web Server
+
+Start the FastAPI web server:
+
 ```bash
-pip install -r requirements.txt
+uvicorn app.main:app --reload
 ```
 
-3. Configure environment:
+Access the web UI at http://localhost:8000/llm/ui
+
+### Running as an MCP Server
+
+You can use this as a standalone MCP server for Claude Desktop or other MCP clients:
+
 ```bash
-cp .env.example .env
-# Edit .env with your settings
+# Run directly
+python mcp_server.py
+
+# Or using the MCP CLI
+mcp run mcp_server.py
+
+# Install in Claude Desktop
+mcp install mcp_server.py
 ```
 
-4. Run the application:
-```bash
-uvicorn main:app --reload
-# python main.py
-# python main.py --port 8001
-# python main.py --host 127.0.0.1 --port 8000 --reload --debug --workers 4
+## MCP Protocol Integration
 
-# restart the MCP server with the new changes:
-# pkill -f "python main.py" && python main.py --port 8000
-# pkill -f "python main.py" || true
+This server implements the Model Context Protocol, providing:
 
-# try running the test client again:
-# cd test_client && python cli.py
-# python cli.py
+### Resources
+
+Access data through standardized resource URLs:
+
+- `models://list` - List all registered models
+- `models://{model_id}` - Details for a specific model
+- `sources://list` - List data sources
+- `snowflake://{source_name}/{path}` - Data from Snowflake
+- `azure://{source_name}/{path}` - Data from Azure Storage
+- `s3://{source_name}/{path}` - Data from S3
+
+### Tools
+
+Programmatically interact with models and data:
+
+- `generate_with_model(model_id, prompt)` - Generate text using a model
+- `query_snowflake(source_name, query)` - Run Snowflake queries
+- `list_storage_files(source_name, path)` - List files in storage
+- `register_model(model_id, name, backend)` - Register a new model
+
+### Prompts
+
+Use built-in prompt templates:
+
+- `data_analysis_prompt(data, question)` - Create a data analysis prompt
+- `query_generator_prompt(table_description, question)` - Generate SQL from natural language
+
+## Configuring Data Sources
+
+### Snowflake
+
+Configure in the `.env` file:
+
 ```
-# Create Admin Key: 
-cd .. && mkdir -p scripts && chmod +x scripts/create_admin_key.py
-<!-- python scripts/create_admin_key.py -->
-export MCP_API_KEY='i69kRwUo6qNdPEgdK5e891t_EvszkpepzLsje5lsiLU'
+SNOWFLAKE_USER=your_username
+SNOWFLAKE_PASSWORD=your_password
+SNOWFLAKE_ACCOUNT=your_account
+SNOWFLAKE_WAREHOUSE=your_warehouse
+SNOWFLAKE_DATABASE=your_database
+```
 
-/opt/homebrew/opt/postgresql@15/bin/createdb -U postgres mcp_db
+### Azure Storage
 
-## API Documentation
+Configure in the `.env` file:
 
-The API documentation is available at:
-- Swagger UI: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
+```
+AZURE_STORAGE_CONNECTION_STRING=your_connection_string
+AZURE_CONTAINER_NAME=your_container
+```
 
-## Data Sources
+### S3
 
-MCP supports the following data sources:
+Configure in the `.env` file:
 
-1. **Internal Databases**
-   - PostgreSQL databases
-   - Job market data
-   - Homebuilders data
-
-2. **Cloud Storage**
-   - Azure Blob Storage
-   - Structured datasets
-   - Historical records
-
-3. **Data Warehouses**
-   - Snowflake
-   - Analytics-ready datasets
-   - Market metrics
-
-## Security
-
-1. **API Keys**
-   - Secure key generation
-   - Permission-based access
-   - Key rotation support
-
-2. **Data Access**
-   - Field-level permissions
-   - Usage quotas
-   - Audit logging
-
-3. **Monitoring**
-   - Usage tracking
-   - Error logging
-   - Access patterns
+```
+AWS_ACCESS_KEY_ID=your_access_key
+AWS_SECRET_ACCESS_KEY=your_secret_key
+S3_BUCKET_NAME=your_bucket
+```
 
 ## Development
 
-1. **Running Tests**:
-```bash
-pytest
-```
+### Project Structure
 
-2. **Code Style**:
-```bash
-flake8
-black .
-```
+- `app/`: The main application
+  - `api/`: API endpoints
+    - `mcp_server.py`: MCP server implementation
+  - `core/`: Core functionality
+    - `storage.py`: Data source backends
+  - `models/`: Database models
+- `mcp_server.py`: Standalone MCP server entry point
 
-3. **Type Checking**:
-```bash
-mypy .
-```
-
-## Contributing
+### Contributing
 
 1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
+2. Create a feature branch: `git checkout -b feature-name`
+3. Commit your changes: `git commit -am 'Add some feature'`
+4. Push to the branch: `git push origin feature-name`
+5. Submit a pull request
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-Need help? Contact support@mcp.ai
-
-## Architecture Overview
-
-```mermaid
-graph TB
-    subgraph "External LLMs"
-        LLM1["Test LLM"]
-        LLM2["Custom LLM"]
-        LLM3["Other LLMs"]
-    end
-
-    subgraph "MCP Server"
-        API["API Layer"]
-        Auth["Authentication & <br/> Rate Limiting"]
-        DM["Data Management"]
-        MM["Model Management"]
-        
-        subgraph "Database"
-            DB[(PostgreSQL)]
-            Cache[(Redis Cache)]
-        end
-    end
-
-    subgraph "Data Sources"
-        DS1[(Internal Data)]
-        DS2[(External APIs)]
-        DS3[(Document Store)]
-    end
-
-    %% Connections
-    LLM1 -->|"1. Register Model"| API
-    LLM1 -->|"2. Get API Key"| Auth
-    LLM1 -->|"3. Query Data"| API
-    
-    API --> Auth
-    Auth --> MM
-    Auth --> DM
-    
-    MM -->|"Model Registry"| DB
-    DM -->|"Data Access"| DB
-    DM -->|"Cache Results"| Cache
-    
-    DM --> DS1
-    DM --> DS2
-    DM --> DS3
-
-    classDef primary fill:#2374ab,stroke:#2374ab,color:#fff
-    classDef secondary fill:#ff7e67,stroke:#ff7e67,color:#fff
-    classDef database fill:#57a773,stroke:#57a773,color:#fff
-    classDef external fill:#484d6d,stroke:#484d6d,color:#fff
-
-    class API,Auth,DM,MM primary
-    class LLM1,LLM2,LLM3 secondary
-    class DB,Cache database
-    class DS1,DS2,DS3 external
-```
-
-## System Components
-
-### 1. External LLMs
-- **Test LLM**: Lightweight test client for development
-- **Custom LLMs**: User-developed models
-- **Other LLMs**: Third-party integrations
-
-### 2. MCP Server Components
-- **API Layer**: FastAPI-based REST endpoints
-- **Authentication**: API key management and validation
-- **Rate Limiting**: Request throttling and quota management
-- **Data Management**: Data access and caching
-- **Model Management**: Model registration and lifecycle
-
-### 3. Data Sources
-- **Internal Data**: Direct database access
-- **External APIs**: Third-party data services
-- **Document Store**: Document and file storage
-
-## Interaction Flow
-
-1. **Model Registration**
-```mermaid
-sequenceDiagram
-    participant LLM as LLM Client
-    participant API as MCP API
-    participant DB as Database
-
-    LLM->>API: Register Model (POST /models/register)
-    API->>DB: Store Model Metadata
-    DB-->>API: Confirm Storage
-    API-->>LLM: Return Model ID
-```
-
-2. **Data Access**
-```mermaid
-sequenceDiagram
-    participant LLM as LLM Client
-    participant API as MCP API
-    participant Auth as Auth Layer
-    participant Cache as Redis Cache
-    participant DB as Database
-
-    LLM->>API: Query Data (with API Key)
-    API->>Auth: Validate API Key
-    Auth-->>API: Key Valid
-    API->>Cache: Check Cache
-    alt Data in Cache
-        Cache-->>API: Return Cached Data
-    else Cache Miss
-        API->>DB: Query Database
-        DB-->>API: Return Data
-        API->>Cache: Store in Cache
-    end
-    API-->>LLM: Return Results
-```
-
-## Quick Start
-
-```bash
-# Start the MCP server
-python main.py --port 8001
-
-# In another terminal, run the test LLM client
-cd test_client
-python test_llm.py
-```
-
-## Authentication and Tokens
-
-### Getting Started with Authentication
-
-1. **Generate an API Key** (via Swagger UI):
-   - Visit http://localhost:8000/docs
-   - Navigate to `/api/v1/auth/api-key` endpoint
-   - Click "Try it out"
-   - Provide the request body:
-     ```json
-     {
-       "name": "my-test-key",
-       "description": "API key for testing"
-     }
-     ```
-   - Execute the request
-   - Copy the returned `api_key` value
-
-2. **Using the API Key in Swagger UI**:
-   - Click the "Authorize" button at the top of the Swagger UI
-   - Enter your API key in the format: `Bearer your-api-key-here`
-   - Click "Authorize"
-   - All subsequent requests will include your API key
-
-3. **Test Client Authentication**:
-   ```python
-   # Option 1: Environment Variable
-   export MCP_API_KEY="your-api-key-here"
-   
-   # Option 2: Direct in test_client/config.py
-   API_KEY = "your-api-key-here"  # For testing only
-   ```
-
-### Token Management
-
-1. **API Key Rotation**:
-   - Generate a new key before the old one expires
-   - Update your applications with the new key
-   - Revoke old keys using the `/api/v1/auth/revoke` endpoint
-
-2. **Token Permissions**:
-   - Default tokens have basic read permissions
-   - Request elevated permissions via the API
-   - Monitor token usage in the admin dashboard
-
-3. **Security Best Practices**:
-   - Never share API keys
-   - Use environment variables
-   - Rotate keys regularly
-   - One key per application/model
-
-### Example: Complete Authentication Flow
-
-```mermaid
-sequenceDiagram
-    participant Client
-    participant Auth
-    participant DB
-    
-    Client->>Auth: Request API Key
-    Auth->>DB: Create Key Entry
-    DB-->>Auth: Confirm Creation
-    Auth-->>Client: Return API Key
-    
-    Note over Client,Auth: Store API Key Securely
-    
-    Client->>Auth: Make Authenticated Request
-    Auth->>DB: Validate Key
-    DB-->>Auth: Key Valid
-    Auth-->>Client: Allow Request
-```
+MIT

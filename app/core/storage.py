@@ -6,6 +6,9 @@ import boto3
 from azure.storage.filedatalake import DataLakeServiceClient
 from azure.identity import DefaultAzureCredential
 import json
+import snowflake.connector
+import pandas as pd
+import io
 
 class StorageBackend(ABC):
     """Abstract base class for storage backends."""
@@ -200,5 +203,180 @@ class AzureStorageBackend(StorageBackend):
             file_client = self.filesystem_client.get_file_client(path)
             file_client.get_file_properties()
             return True
+        except Exception:
+            return False
+
+class SnowflakeStorageBackend(StorageBackend):
+    """Snowflake storage backend for querying data as virtual files."""
+    
+    def __init__(self, connection_params: Dict[str, Any]):
+        self.connection_params = connection_params
+        self.conn = snowflake.connector.connect(**connection_params)
+    
+    def _get_cursor(self):
+        # Ensure connection is active
+        if not self.conn.is_active():
+            self.conn = snowflake.connector.connect(**self.connection_params)
+        return self.conn.cursor()
+    
+    def list_files(self, path: str = "") -> List[Dict[str, Any]]:
+        """
+        List tables or views in a schema.
+        Path format: 'database/schema' or 'database/schema/table'
+        """
+        parts = path.strip('/').split('/')
+        if len(parts) == 2:
+            # List tables in schema
+            database, schema = parts
+            cursor = self._get_cursor()
+            cursor.execute(f"SHOW TABLES IN {database}.{schema}")
+            tables = cursor.fetchall()
+            
+            result = []
+            for table in tables:
+                result.append({
+                    "name": table[1],  # Table name
+                    "path": f"{database}/{schema}/{table[1]}",
+                    "size": 0,  # Size not directly available
+                    "modified": 0,  # Modified time not directly available
+                    "is_dir": False,
+                    "metadata": {
+                        "kind": table[0],  # TABLE, VIEW, etc.
+                        "database": database,
+                        "schema": schema
+                    }
+                })
+            return result
+        elif len(parts) == 1:
+            # List schemas in database
+            database = parts[0]
+            cursor = self._get_cursor()
+            cursor.execute(f"SHOW SCHEMAS IN {database}")
+            schemas = cursor.fetchall()
+            
+            result = []
+            for schema in schemas:
+                result.append({
+                    "name": schema[1],  # Schema name
+                    "path": f"{database}/{schema[1]}",
+                    "size": 0,
+                    "modified": 0,
+                    "is_dir": True,
+                    "metadata": {
+                        "database": database
+                    }
+                })
+            return result
+        else:
+            # List databases
+            cursor = self._get_cursor()
+            cursor.execute("SHOW DATABASES")
+            databases = cursor.fetchall()
+            
+            result = []
+            for db in databases:
+                result.append({
+                    "name": db[1],  # Database name
+                    "path": db[1],
+                    "size": 0,
+                    "modified": 0,
+                    "is_dir": True
+                })
+            return result
+    
+    def read_file(self, path: str) -> bytes:
+        """
+        Read table data as CSV bytes.
+        Path format: 'database/schema/table'
+        """
+        parts = path.strip('/').split('/')
+        if len(parts) != 3:
+            raise ValueError("Path must be in format 'database/schema/table'")
+        
+        database, schema, table = parts
+        cursor = self._get_cursor()
+        cursor.execute(f"SELECT * FROM {database}.{schema}.{table} LIMIT 1000")
+        
+        # Convert to pandas DataFrame and then to CSV
+        df = cursor.fetch_pandas_all()
+        csv_buffer = io.StringIO()
+        df.to_csv(csv_buffer, index=False)
+        
+        return csv_buffer.getvalue().encode('utf-8')
+    
+    def write_file(self, path: str, content: bytes) -> bool:
+        """
+        Write data to a table (creates or replaces).
+        Path format: 'database/schema/table'
+        Content should be CSV data.
+        """
+        parts = path.strip('/').split('/')
+        if len(parts) != 3:
+            raise ValueError("Path must be in format 'database/schema/table'")
+        
+        database, schema, table = parts
+        
+        # Read the CSV content into a DataFrame
+        try:
+            df = pd.read_csv(io.BytesIO(content))
+            cursor = self._get_cursor()
+            
+            # Check if table exists
+            cursor.execute(f"SHOW TABLES LIKE '{table}' IN {database}.{schema}")
+            table_exists = len(cursor.fetchall()) > 0
+            
+            if table_exists:
+                # Use write_pandas to overwrite
+                success, _, _ = cursor.write_pandas(
+                    df, 
+                    f"{database}.{schema}.{table}", 
+                    overwrite=True
+                )
+            else:
+                # Create table and write data
+                success, _, _ = cursor.write_pandas(
+                    df, 
+                    f"{database}.{schema}.{table}", 
+                    auto_create_table=True
+                )
+                
+            return success
+        except Exception as e:
+            print(f"Error writing to Snowflake: {e}")
+            return False
+    
+    def delete_file(self, path: str) -> bool:
+        """
+        Delete a table.
+        Path format: 'database/schema/table'
+        """
+        parts = path.strip('/').split('/')
+        if len(parts) != 3:
+            raise ValueError("Path must be in format 'database/schema/table'")
+        
+        database, schema, table = parts
+        
+        try:
+            cursor = self._get_cursor()
+            cursor.execute(f"DROP TABLE IF EXISTS {database}.{schema}.{table}")
+            return True
+        except Exception:
+            return False
+    
+    def file_exists(self, path: str) -> bool:
+        """
+        Check if a table exists.
+        Path format: 'database/schema/table'
+        """
+        parts = path.strip('/').split('/')
+        if len(parts) != 3:
+            return False
+        
+        database, schema, table = parts
+        
+        try:
+            cursor = self._get_cursor()
+            cursor.execute(f"SHOW TABLES LIKE '{table}' IN {database}.{schema}")
+            return len(cursor.fetchall()) > 0
         except Exception:
             return False 
