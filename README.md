@@ -52,7 +52,21 @@ uvicorn main:app --reload
 # python main.py
 # python main.py --port 8001
 # python main.py --host 127.0.0.1 --port 8000 --reload --debug --workers 4
+
+# restart the MCP server with the new changes:
+# pkill -f "python main.py" && python main.py --port 8000
+# pkill -f "python main.py" || true
+
+# try running the test client again:
+# cd test_client && python cli.py
+# python cli.py
 ```
+# Create Admin Key: 
+cd .. && mkdir -p scripts && chmod +x scripts/create_admin_key.py
+<!-- python scripts/create_admin_key.py -->
+export MCP_API_KEY='i69kRwUo6qNdPEgdK5e891t_EvszkpepzLsje5lsiLU'
+
+/opt/homebrew/opt/postgresql@15/bin/createdb -U postgres mcp_db
 
 ## API Documentation
 
@@ -249,4 +263,76 @@ python main.py --port 8001
 # In another terminal, run the test LLM client
 cd test_client
 python test_llm.py
+```
+
+## Authentication and Tokens
+
+### Getting Started with Authentication
+
+1. **Generate an API Key** (via Swagger UI):
+   - Visit http://localhost:8000/docs
+   - Navigate to `/api/v1/auth/api-key` endpoint
+   - Click "Try it out"
+   - Provide the request body:
+     ```json
+     {
+       "name": "my-test-key",
+       "description": "API key for testing"
+     }
+     ```
+   - Execute the request
+   - Copy the returned `api_key` value
+
+2. **Using the API Key in Swagger UI**:
+   - Click the "Authorize" button at the top of the Swagger UI
+   - Enter your API key in the format: `Bearer your-api-key-here`
+   - Click "Authorize"
+   - All subsequent requests will include your API key
+
+3. **Test Client Authentication**:
+   ```python
+   # Option 1: Environment Variable
+   export MCP_API_KEY="your-api-key-here"
+   
+   # Option 2: Direct in test_client/config.py
+   API_KEY = "your-api-key-here"  # For testing only
+   ```
+
+### Token Management
+
+1. **API Key Rotation**:
+   - Generate a new key before the old one expires
+   - Update your applications with the new key
+   - Revoke old keys using the `/api/v1/auth/revoke` endpoint
+
+2. **Token Permissions**:
+   - Default tokens have basic read permissions
+   - Request elevated permissions via the API
+   - Monitor token usage in the admin dashboard
+
+3. **Security Best Practices**:
+   - Never share API keys
+   - Use environment variables
+   - Rotate keys regularly
+   - One key per application/model
+
+### Example: Complete Authentication Flow
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Auth
+    participant DB
+    
+    Client->>Auth: Request API Key
+    Auth->>DB: Create Key Entry
+    DB-->>Auth: Confirm Creation
+    Auth-->>Client: Return API Key
+    
+    Note over Client,Auth: Store API Key Securely
+    
+    Client->>Auth: Make Authenticated Request
+    Auth->>DB: Validate Key
+    DB-->>Auth: Key Valid
+    Auth-->>Client: Allow Request
 ```

@@ -52,6 +52,21 @@ async def lifespan(app: FastAPI):
         await init_db()
         logger.info("Database initialized successfully")
         
+        # Log startup information
+        mode = os.getenv("APP_ENV", "development")
+        log_connection_info(
+            host=settings.HOST,
+            port=settings.PORT,
+            mode=mode
+        )
+        logger.info(
+            "Database connection details",
+            extra={
+                "db_url": settings.get_db_url(),
+                "storage_backend": settings.STORAGE_BACKEND
+            }
+        )
+        
         yield
         
     except Exception as e:
@@ -89,6 +104,10 @@ app.include_router(api_router, prefix="/api")
 app.include_router(health.router, tags=["health"])
 app.include_router(keys.router, prefix="/api/keys", tags=["api-keys"])
 app.include_router(models.router, prefix="/api/models", tags=["models"])
+
+# Add LLM UI router
+from app.api.llm_ui import router as llm_ui_router
+app.include_router(llm_ui_router)
 
 # Initialize rate limiter
 limiter = Limiter(key_func=get_remote_address)
@@ -194,79 +213,150 @@ class LoggingMiddleware:
 app.middleware("http")(LoggingMiddleware())
 
 @app.get("/", response_class=HTMLResponse)
-async def root():
+async def root(request: Request):
+    """Serve the index page"""
     return """
+    <!DOCTYPE html>
     <html>
-        <head>
-            <title>MCP Server</title>
-            <style>
-                body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; line-height: 1.6; }
-                h1 { color: #2c3e50; border-bottom: 2px solid #eee; padding-bottom: 10px; }
-                .endpoint { background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 15px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-                code { background: #e9ecef; padding: 2px 5px; border-radius: 3px; font-family: monospace; }
-                .task-type { color: #2980b9; }
-                .navigation { margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; }
-                .category { margin-top: 20px; }
-                .category h4 { color: #34495e; }
-                .info { background: #e1f5fe; padding: 10px; border-radius: 4px; margin: 10px 0; }
-            </style>
-        </head>
-        <body>
-            <h1>Welcome to MCP Server</h1>
-            <p>This server provides various operations through a unified task execution interface.</p>
+    <head>
+        <title>MCP Server</title>
+        <style>
+            body { 
+                font-family: Arial, sans-serif; 
+                max-width: 800px; 
+                margin: 0 auto; 
+                padding: 20px; 
+                line-height: 1.6; 
+            }
+            h1 { 
+                color: #2c3e50; 
+                border-bottom: 2px solid #eee; 
+                padding-bottom: 10px; 
+            }
+            .endpoint { 
+                background: #f8f9fa; 
+                padding: 20px; 
+                border-radius: 8px; 
+                margin: 15px 0; 
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
+            }
+            code { 
+                background: #e9ecef; 
+                padding: 2px 5px; 
+                border-radius: 3px; 
+                font-family: monospace; 
+            }
+            .task-type { 
+                color: #2980b9; 
+            }
+            .navigation { 
+                margin-top: 30px; 
+                padding-top: 20px; 
+                border-top: 1px solid #eee; 
+            }
+            .category { 
+                margin-top: 20px; 
+            }
+            .category h4 { 
+                color: #34495e; 
+            }
+            .info { 
+                background: #e1f5fe; 
+                padding: 15px; 
+                border-radius: 4px; 
+                margin: 10px 0; 
+            }
+            .button {
+                display: inline-block;
+                padding: 10px 20px;
+                background: #3498db;
+                color: white;
+                text-decoration: none;
+                border-radius: 4px;
+                margin-right: 10px;
+                margin-bottom: 10px;
+            }
+            .button:hover {
+                background: #2980b9;
+            }
+            a {
+                color: #3498db;
+                text-decoration: none;
+            }
+            a:hover {
+                text-decoration: underline;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>Welcome to MCP Server</h1>
+        <p>This server provides various operations through a unified task execution interface.</p>
+
+        <div class="info">
+            <strong>Server Features:</strong>
+            <ul>
+                <li>Rate limiting: 20 requests per minute per IP</li>
+                <li>Response caching: 5 minutes TTL</li>
+                <li>Comprehensive error handling</li>
+                <li>Request logging</li>
+            </ul>
+        </div>
+
+        <div class="endpoint">
+            <h3>LLM Integration</h3>
+            <p>Access our LLM integration features:</p>
+            <a href="/llm/ui" class="button">LLM Dashboard</a>
+            <a href="/llm/register" class="button">Register New Model</a>
+            <a href="/llm/models" class="button">Registered Models</a>
+        </div>
+
+        <h2>Available Endpoints:</h2>
+        <div class="endpoint">
+            <h3>POST /execute-task</h3>
             
-            <div class="info">
-                <strong>Server Features:</strong>
+            <div class="category">
+                <h4>File Operations:</h4>
                 <ul>
-                    <li>Rate limiting: 20 requests per minute per IP</li>
-                    <li>Response caching: 5 minutes TTL</li>
-                    <li>Comprehensive error handling</li>
-                    <li>Request logging</li>
+                    <li><code class="task-type">read_file</code>: Read contents of a file</li>
+                    <li><code class="task-type">list_directory</code>: List contents of a directory</li>
+                    <li><code class="task-type">file_info</code>: Get detailed information about a file</li>
+                    <li><code class="task-type">search_files</code>: Search for files by pattern</li>
+                    <li><code class="task-type">calculate_hash</code>: Calculate file hash (MD5, SHA-1, SHA-256)</li>
                 </ul>
             </div>
 
-            <h2>Available Endpoints:</h2>
-            <div class="endpoint">
-                <h3>POST /execute-task</h3>
-                <div class="category">
-                    <h4>File Operations:</h4>
-                    <ul>
-                        <li><code class="task-type">read_file</code>: Read contents of a file</li>
-                        <li><code class="task-type">list_directory</code>: List contents of a directory</li>
-                        <li><code class="task-type">file_info</code>: Get detailed information about a file</li>
-                        <li><code class="task-type">search_files</code>: Search for files by pattern</li>
-                        <li><code class="task-type">calculate_hash</code>: Calculate file hash (MD5, SHA-1, SHA-256)</li>
-                    </ul>
-                </div>
-                <div class="category">
-                    <h4>Real-time Data (No API Key Required):</h4>
-                    <ul>
-                        <li><code class="task-type">get_crypto_prices</code>: Get cryptocurrency prices</li>
-                        <li><code class="task-type">get_quote</code>: Get random inspirational quote</li>
-                        <li><code class="task-type">get_joke</code>: Get programming jokes</li>
-                        <li><code class="task-type">get_dog_image</code>: Get random dog images</li>
-                        <li><code class="task-type">get_cat_fact</code>: Get random cat facts</li>
-                        <li><code class="task-type">get_ip_info</code>: Get information about an IP address</li>
-                        <li><code class="task-type">get_exchange_rates</code>: Get currency exchange rates</li>
-                        <li><code class="task-type">get_activity</code>: Get random activity suggestions</li>
-                    </ul>
-                </div>
-                <div class="category">
-                    <h4>Real-time Data (API Key Required):</h4>
-                    <ul>
-                        <li><code class="task-type">get_weather</code>: Get weather information</li>
-                        <li><code class="task-type">get_news</code>: Get latest news</li>
-                    </ul>
-                </div>
-            </div>
-            <div class="navigation">
-                <p>For detailed API documentation, visit:</p>
+            <div class="category">
+                <h4>Real-time Data (No API Key Required):</h4>
                 <ul>
-                    <li><a href="/docs">Interactive API Documentation (Swagger UI)</a></li>
-                    <li><a href="/redoc">Alternative Documentation (ReDoc)</a></li>
+                    <li><code class="task-type">get_crypto_prices</code>: Get cryptocurrency prices</li>
+                    <li><code class="task-type">get_quote</code>: Get random inspirational quote</li>
+                    <li><code class="task-type">get_joke</code>: Get programming jokes</li>
+                    <li><code class="task-type">get_dog_image</code>: Get random dog images</li>
+                    <li><code class="task-type">get_cat_fact</code>: Get random cat facts</li>
+                    <li><code class="task-type">get_ip_info</code>: Get information about an IP address</li>
+                    <li><code class="task-type">get_exchange_rates</code>: Get currency exchange rates</li>
+                    <li><code class="task-type">get_activity</code>: Get random activity suggestions</li>
                 </ul>
             </div>
-        </body>
+
+            <div class="category">
+                <h4>Real-time Data (API Key Required):</h4>
+                <ul>
+                    <li><code class="task-type">get_weather</code>: Get weather information</li>
+                    <li><code class="task-type">get_news</code>: Get latest news</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="navigation">
+            <p>For detailed API documentation, visit:</p>
+            <ul>
+                <li><a href="/docs">Interactive API Documentation (Swagger UI)</a></li>
+                <li><a href="/redoc">Alternative Documentation (ReDoc)</a></li>
+                <li><a href="/llm/docs">LLM Integration Guide</a></li>
+            </ul>
+        </div>
+    </body>
     </html>
     """
 
@@ -906,21 +996,6 @@ async def health_check():
     """Health check endpoint."""
     return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
 
-@app.on_event("startup")
-async def startup_event():
-    """Log startup information."""
-    mode = os.getenv("APP_ENV", "development")
-    log_connection_info(
-        host=settings.HOST,
-        port=settings.PORT,
-        mode=mode
-    )
-    logger.info(
-        "database_connection",
-        db_url=settings.get_db_url(),
-        storage_backend=settings.STORAGE_BACKEND
-    )
-
 def main():
     """Main entry point for the application"""
     parser = argparse.ArgumentParser(
@@ -956,6 +1031,13 @@ def main():
         default=settings.DEBUG,
         help="Enable debug mode"
     )
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        choices=["debug", "info", "warning", "error", "critical"],
+        default="info",
+        help="Set the logging level"
+    )
 
     args = parser.parse_args()
 
@@ -987,7 +1069,7 @@ def main():
         port=args.port,
         reload=args.reload,
         workers=args.workers,
-        log_level="debug" if args.debug else "info"
+        log_level=args.log_level if not args.debug else "debug"
     )
 
 if __name__ == "__main__":

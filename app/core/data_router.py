@@ -5,13 +5,8 @@ from .query_mapper import QueryMapper
 from .snowflake_connector import SnowflakeConnector
 from .azure_storage import AzureStorageConnector
 from .local_db import LocalDBConnector
+from app.core.enums import DataSourceType
 
-class DataSourceType(Enum):
-    SNOWFLAKE = "snowflake"
-    AZURE_STORAGE = "azure_storage"
-    LOCAL_DB = "local_db"
-
-@dataclass
 class DataSourcePermission:
     source_type: DataSourceType
     read: bool = False

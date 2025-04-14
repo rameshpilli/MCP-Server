@@ -14,6 +14,61 @@ settings = get_settings()
 class APIKeyManager:
     """Manages API key generation and validation."""
     
+    async def create_key(
+        self,
+        db: AsyncSession,
+        owner: str,
+        expires_in_days: int = 365,
+        permissions: List[str] = ["model:access"],
+        rate_limit: str = "100/minute"
+    ) -> APIKey:
+        """Create a new API key and save it to the database.
+        
+        Args:
+            db: Database session
+            owner: Owner of the key
+            expires_in_days: Number of days until key expires
+            permissions: List of permissions
+            rate_limit: Rate limit string (e.g. "100/minute")
+            
+        Returns:
+            APIKey model instance with the plain key
+        """
+        # Generate key ID
+        key_id = f"key_{secrets.token_urlsafe(8)}"
+        
+        # Calculate expiration date
+        expires_at = datetime.now(UTC).replace(hour=23, minute=59, second=59)
+        if expires_in_days:
+            expires_at = expires_at.replace(day=expires_at.day + expires_in_days)
+            
+        # Generate the key
+        plain_key, api_key = await self.generate_key(
+            key_id=key_id,
+            owner=owner,
+            expires_at=expires_at,
+            permissions=permissions,
+            rate_limit=rate_limit
+        )
+        
+        # Save to database
+        db.add(api_key)
+        await db.flush()
+        
+        # Create a copy of the API key with the plain key for response
+        response_key = APIKey(
+            key_id=api_key.key_id,
+            key=plain_key,  # Use plain key for response
+            owner=api_key.owner,
+            created_at=api_key.created_at,
+            expires_at=api_key.expires_at,
+            permissions=api_key.permissions,
+            is_active=api_key.is_active,
+            rate_limit=api_key.rate_limit
+        )
+        
+        return response_key
+    
     async def generate_key(
         self,
         key_id: str,

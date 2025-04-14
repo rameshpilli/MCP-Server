@@ -20,6 +20,9 @@ from app.core.config import Settings, get_settings
 from app.core.database import init_db, get_db, get_engine, get_session_factory, Base
 from app.core.auth import api_key_manager
 
+# Add LLM UI router
+from app.api.llm_ui import router as llm_ui_router
+
 settings = get_settings()
 startup_validator = StartupValidator(config=settings)
 
@@ -132,6 +135,15 @@ app.include_router(api_router, prefix="/api", dependencies=[Depends(get_db)])
 app.include_router(health.router, tags=["health"])
 app.include_router(keys.router, prefix="/api/keys", tags=["api-keys"])
 app.include_router(models.router, prefix="/api/models", tags=["models"])
+
+# Add LLM UI router
+app.include_router(llm_ui_router)
+
+# Add API key middleware only for API routes
+app.add_middleware(
+    APIKeyMiddleware,
+    exclude_paths=["/llm/ui", "/llm/register", "/llm/datasources"]
+)
 
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request):

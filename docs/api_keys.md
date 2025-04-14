@@ -39,7 +39,7 @@ curl -X POST "${MCP_SERVER_URL}/models/register" \
     "model_id": "my-model",
     "config": {
       "backend": "custom",
-      "api_base": "http://my-model-endpoint"
+      "api_base": "xhttp://my-model-endpoint"
     }
   }'
 

@@ -2,62 +2,82 @@ import requests
 import json
 from typing import Dict, List, Optional
 import os
-from datetime import datetime
+from datetime import datetime, UTC, timedelta
+from config import MCP_URL, API_KEY, MODEL_NAME, MODEL_VERSION, MODEL_DESCRIPTION
 
 class TestLLMClient:
-    def __init__(self, mcp_url: str = "http://localhost:8000"):
+    def __init__(self, mcp_url: str = MCP_URL):
         self.mcp_url = mcp_url
-        self.api_key = None
+        self.api_key = API_KEY
         self.model_id = None
 
     def register_model(self) -> None:
         """Register our test LLM model with MCP"""
-        url = f"{self.mcp_url}/api/v1/models/register"
+        url = f"{self.mcp_url}/api/models/register"
         
         model_data = {
-            "name": "test-llm",
-            "version": "0.1",
-            "description": "A test LLM for demonstrating MCP integration",
-            "model_type": "text-generation",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "prompt": {"type": "string"},
-                    "max_tokens": {"type": "integer", "default": 100}
+            "model_id": MODEL_NAME.lower().replace(" ", "-"),
+            "name": MODEL_NAME,
+            "version": MODEL_VERSION,
+            "description": MODEL_DESCRIPTION,
+            "backend": "local",
+            "api_base": None,
+            "config": {
+                "model_type": "text-generation",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {"type": "string"},
+                        "max_tokens": {"type": "integer", "default": 100}
+                    },
+                    "required": ["prompt"]
                 },
-                "required": ["prompt"]
-            },
-            "output_schema": {
-                "type": "object",
-                "properties": {
-                    "generated_text": {"type": "string"},
-                    "tokens_used": {"type": "integer"}
+                "output_schema": {
+                    "type": "object",
+                    "properties": {
+                        "generated_text": {"type": "string"},
+                        "tokens_used": {"type": "integer"}
+                    }
                 }
             }
         }
 
-        response = requests.post(url, json=model_data)
-        if response.status_code == 201:
+        headers = {"X-API-Key": self.api_key} if self.api_key else {}
+
+        response = requests.post(url, json=model_data, headers=headers)
+        if response.status_code == 200 or response.status_code == 201:
             data = response.json()
             self.model_id = data["model_id"]
+            self.api_key = data["api_key"]
             print(f"Model registered successfully with ID: {self.model_id}")
+            print(f"New API key received: {self.api_key}")
+            
+            # Save to environment for future use
+            os.environ["MCP_API_KEY"] = self.api_key
         else:
-            raise Exception(f"Failed to register model: {response.text}")
+            raise Exception(f"Failed to register model: {response.status_code} - {response.text}")
 
     def get_api_key(self) -> None:
         """Get an API key from MCP"""
-        url = f"{self.mcp_url}/api/v1/auth/api-key"
+        url = f"{self.mcp_url}/api/keys"
         
         data = {
-            "name": "test-llm-client",
-            "description": "API key for test LLM client"
+            "owner": "test-llm-client",
+            "expiry_days": 30,
+            "permissions": ["read", "write"],
+            "rate_limit": "100/minute"
         }
 
         response = requests.post(url, json=data)
         if response.status_code == 201:
             data = response.json()
-            self.api_key = data["api_key"]
+            # Store the plain API key returned by the server
+            self.api_key = data["key"]
+            # Save to environment for future use
+            os.environ["MCP_API_KEY"] = self.api_key
             print(f"API key obtained successfully")
+            print(f"To use this key in the future, set in your environment:")
+            print(f"export MCP_API_KEY='{self.api_key}'")
         else:
             raise Exception(f"Failed to get API key: {response.text}")
 
@@ -67,7 +87,7 @@ class TestLLMClient:
             raise Exception("No API key available. Call get_api_key() first")
 
         url = f"{self.mcp_url}/api/v1/data/query"
-        headers = {"Authorization": f"Bearer {self.api_key}"}
+        headers = {"X-API-Key": self.api_key}
         
         data = {
             "query": query,
@@ -94,9 +114,12 @@ def main():
     client = TestLLMClient()
 
     try:
-        # Get API key
-        client.get_api_key()
-        print("✓ Obtained API key")
+        # Get API key if not already available
+        if not client.api_key:
+            client.get_api_key()
+            print("✓ Obtained API key")
+        else:
+            print("✓ Using existing API key")
 
         # Register model
         client.register_model()

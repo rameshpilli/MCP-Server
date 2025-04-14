@@ -27,9 +27,10 @@ class Settings(BaseSettings):
     TEST_DB_URL: str = "sqlite+aiosqlite:///:memory:"
     
     # Application Configuration
-    APP_NAME: str = "Model Context Protocol"
-    APP_DESCRIPTION: str = "A platform for managing ML model contexts and deployments"
-    APP_VERSION: str = "0.1.0"
+    APP_NAME: str = "MCP Server"
+    APP_DESCRIPTION: str = "Model Control Protocol Server"
+    APP_VERSION: str = "1.0.0"
+    APP_ENV: str = "development"
     PRODUCTION: bool = False
     
     # Server Configuration
@@ -98,24 +99,19 @@ class Settings(BaseSettings):
 
     # Public paths that don't require authentication
     PUBLIC_PATHS: Set[str] = {
-        "/",
-        "/docs",
-        "/redoc",
-        "/openapi.json",
-        "/api/docs",
-        "/api/redoc",
-        "/api/openapi.json",
-        "/health",
-        "/metrics",
-        "/api/v1/auth/login",
-        "/api/v1/auth/register",
-        "/api/keys",
-        "/api/v1/auth/api-keys",
+        "/",  # Landing page
+        "/docs",  # Swagger UI
+        "/redoc",  # ReDoc UI
+        "/openapi.json",  # OpenAPI schema
+        "/health"  # Health check endpoint
     }
     
     # Paths that require authentication but not rate limiting
     NO_RATE_LIMIT_PATHS: Set[str] = {
-        "/api/models/register",
+        "/health",  # Health check endpoint
+        "/docs",  # Swagger UI
+        "/redoc",  # ReDoc UI
+        "/openapi.json"  # OpenAPI schema
     }
 
     class Config:

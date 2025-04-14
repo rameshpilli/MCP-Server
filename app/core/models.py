@@ -1,8 +1,9 @@
-from sqlalchemy import Column, String, Integer, Float, DateTime, JSON, Enum as SQLEnum, Boolean, ForeignKey, MetaData
+from sqlalchemy import Column, String, Integer, Float, DateTime, JSON, Enum as SQLEnum, Boolean, ForeignKey, MetaData, Table
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from datetime import datetime, UTC
 from app.core.config import ModelBackend
 from app.core.database import Base
+from app.core.enums import DataSourceType
 
 # Create metadata with naming convention
 convention = {
@@ -15,6 +16,16 @@ convention = {
 
 naming_metadata = MetaData(naming_convention=convention)
 Base.metadata = naming_metadata
+
+# Association table for DataSource-APIKey many-to-many relationship
+datasource_permissions = Table(
+    'datasource_permissions',
+    Base.metadata,
+    Column('datasource_id', Integer, ForeignKey('data_sources.id'), primary_key=True),
+    Column('api_key_id', Integer, ForeignKey('api_keys.id'), primary_key=True),
+    Column('created_at', DateTime, default=datetime.utcnow),
+    Column('permissions', JSON, default=["read"])
+)
 
 class ModelRecord(Base):
     """Model registration record."""
@@ -51,17 +62,18 @@ class APIKey(Base):
     key_id = Column(String(255), unique=True, nullable=False)
     key = Column(String(255), unique=True, nullable=False)
     owner = Column(String(255), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    expires_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    expires_at = Column(DateTime(timezone=True), nullable=True)
     permissions = Column(JSON, default=["read"])
     is_active = Column(Boolean, default=True)
-    last_used = Column(DateTime, nullable=True)
+    last_used = Column(DateTime(timezone=True), nullable=True)
     usage_count = Column(Integer, default=0)
     rate_limit = Column(String(50), default="20/minute")
     
     # Relationships
     usage_logs = relationship("ModelUsageLog", back_populates="api_key")
     quotas = relationship("UsageQuota", backref="api_key")
+    data_sources = relationship("DataSource", secondary=datasource_permissions, back_populates="api_keys")
 
 class ModelUsageLog(Base):
     """Model usage log."""
@@ -96,4 +108,23 @@ class UsageQuota(Base):
     reset_frequency = Column(String(50))  # e.g., 'daily', 'monthly'
     last_reset = Column(DateTime, default=datetime.utcnow)
     created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow) 
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class DataSource(Base):
+    """Database model for data sources"""
+    __tablename__ = 'data_sources'
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(255), unique=True, nullable=False)
+    source_type = Column(SQLEnum(DataSourceType))
+    connection_string = Column(String, nullable=True)
+    config = Column(JSON, default=dict)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_health_check = Column(DateTime, nullable=True)
+    is_healthy = Column(Boolean, default=True)
+    error_message = Column(String, nullable=True)
+
+    # Relationships
+    api_keys = relationship("APIKey", secondary=datasource_permissions, back_populates="data_sources") 

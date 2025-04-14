@@ -14,6 +14,7 @@ from sqlalchemy import select
 from .models import ModelRecord, APIKey as DBAPIKey
 from .database import get_db
 from .logger import logger
+from .security import APIKeyManager, create_api_key_hash
 
 logger = logging.getLogger(__name__)
 
@@ -52,98 +53,8 @@ class APIKeyCreate(BaseModel):
     permissions: List[str] = ["read"]
     rate_limit: str = "20/minute"
 
-class APIKeyManager:
-    """Manages API key generation, validation, and storage"""
-    
-    def __init__(self):
-        self.key_length = 32
-    
-    async def generate_key(
-        self,
-        owner: str,
-        expires_at: Optional[datetime] = None,
-        permissions: Optional[List[str]] = None
-    ) -> DBAPIKey:
-        """Generate a new API key"""
-        key = secrets.token_urlsafe(self.key_length)
-        key_id = secrets.token_urlsafe(16)
-        
-        api_key = DBAPIKey(
-            key_id=key_id,
-            key=key,
-            owner=owner,
-            created_at=datetime.now(UTC),
-            expires_at=expires_at,
-            permissions=permissions or ["read"],
-            is_active=True,
-            last_used=None,
-            usage_count=0,
-            rate_limit="20/minute"
-        )
-        
-        return api_key
-    
-    async def validate_key(self, db: AsyncSession, key: str) -> Optional[DBAPIKey]:
-        """Validate an API key"""
-        try:
-            result = await db.execute(
-                select(DBAPIKey).where(
-                    DBAPIKey.key == key,
-                    DBAPIKey.is_active == True,
-                    (DBAPIKey.expires_at.is_(None) | (DBAPIKey.expires_at > datetime.now(UTC)))
-                )
-            )
-            api_key = result.scalar_one_or_none()
-            if api_key:
-                api_key.last_used = datetime.now(UTC)
-                api_key.usage_count += 1
-                await db.commit()
-            return api_key
-        except Exception as e:
-            logger.error(f"Error validating API key: {str(e)}")
-            await db.rollback()
-            return None
-    
-    async def revoke_key(self, db: AsyncSession, key: str) -> bool:
-        """Revoke an API key"""
-        try:
-            result = await db.execute(
-                select(DBAPIKey).where(DBAPIKey.key == key)
-            )
-            api_key = result.scalar_one_or_none()
-            
-            if api_key:
-                api_key.is_active = False
-                await db.commit()
-                return True
-            return False
-        except Exception as e:
-            logger.error(f"Error revoking API key: {str(e)}")
-            await db.rollback()
-            return False
-
+# Initialize the API key manager
 api_key_manager = APIKeyManager()
-
-# Example usage:
-"""
-# Generate a key for a new user
-key = api_key_manager.generate_key(
-    owner="john.doe@company.com",
-    expires_at=datetime.utcnow() + timedelta(days=90),
-    permissions=["read", "write"]
-)
-
-# Share the key with the user
-print(f"Your API key: {key.key}")
-
-# Later, validate the key
-if api_key_manager.validate_key(user_provided_key):
-    # Allow access
-    pass
-else:
-    # Deny access
-    pass
-""" 
 
 X_API_KEY = APIKeyHeader(name="X-API-Key", auto_error=True)
 TEST_API_KEY = os.getenv("TEST_API_KEY", "test_key_dev_only")

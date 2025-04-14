@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from typing import Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Security
 from fastapi.security import APIKeyHeader
@@ -6,9 +6,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from jose import JWTError, jwt
 from app.core.dependencies import get_db
 from app.core.config import Settings
+from app.core.security import APIKeyManager
+from app.schemas.api_key import APIKeyCreate, APIKeyResponse
+import secrets
 
-router = APIRouter()
+router = APIRouter(prefix="/v1/auth")
 settings = Settings()
+api_key_manager = APIKeyManager()
 
 # API Key header
 API_KEY_HEADER = APIKeyHeader(name="X-API-Key")
@@ -91,4 +95,37 @@ async def revoke_token(
     """Revoke an API key."""
     # In a real implementation, we would add the token to a blacklist
     # or mark it as revoked in the database
-    return {"status": "Token revoked successfully"} 
+    return {"status": "Token revoked successfully"}
+
+@router.post("/api-key", response_model=APIKeyResponse, status_code=201)
+async def create_api_key(
+    key_data: APIKeyCreate,
+    db: AsyncSession = Depends(get_db)
+) -> APIKeyResponse:
+    """Create a new API key"""
+    try:
+        # Generate key
+        plain_key, api_key = await api_key_manager.generate_key(
+            key_id=f"key_{secrets.token_urlsafe(8)}",
+            owner=key_data.owner,
+            expires_at=datetime.now(UTC) + timedelta(days=key_data.expiry_days) if key_data.expiry_days else None,
+            permissions=key_data.permissions,
+            rate_limit=key_data.rate_limit
+        )
+        
+        # Save to database
+        db.add(api_key)
+        await db.commit()
+        await db.refresh(api_key)
+        
+        return APIKeyResponse(
+            key=plain_key,
+            key_id=api_key.key_id,
+            owner=api_key.owner,
+            expires_at=api_key.expires_at,
+            permissions=api_key.permissions,
+            rate_limit=api_key.rate_limit
+        )
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e)) 
