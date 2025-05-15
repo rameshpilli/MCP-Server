@@ -1,0 +1,7 @@
+timestamp,step,message,session_id,tools_used,context_found,response_length,processing_time_ms,status
+2025-05-11T15:04:14.195075,chat_start,object NoneType can't be used in 'await' expression,chat_1746990254,,False,0,0,error
+2025-05-11T15:04:18.468608,chat_start,object NoneType can't be used in 'await' expression,chat_1746990258,,False,0,0,error
+2025-05-11T15:04:20.497195,message_processing,object list can't be used in 'await' expression,none,,False,0,0,error
+2025-05-11T15:04:43.682115,chat_start,object NoneType can't be used in 'await' expression,chat_1746990283,,False,0,0,error
+2025-05-11T15:04:53.916646,message_processing,object list can't be used in 'await' expression,none,,False,0,0,error
+2025-05-11T19:01:40.479349,chat_start,object NoneType can't be used in 'await' expression,chat_1747004500,,False,0,0,error

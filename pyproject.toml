@@ -1,0 +1,33 @@
+[project]
+name = "mcp-server"
+version = "0.1.0"
+description = "Generic MCP Server with Chainlit Integration"
+authors = [
+    {name = "MCP Team", email = "team@example.com"}
+]
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0",
+    "fastmcp>=0.1.0",
+    "chainlit>=0.7.0",
+    "pydantic>=2.0.0",
+    "httpx>=0.25.0",
+    "pandas>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "cohere>=4.0.0",
+    "click>=8.0.0"
+]
+requires-python = ">=3.9"
+
+[project.scripts]
+uvx = "app.cli:cli"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"] 

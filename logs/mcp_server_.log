@@ -1,0 +1,26 @@
+2025-05-11 15:03:17,913 - mcp_server - INFO - MCP server starting...
+2025-05-11 15:03:48,785 - mcp_server - INFO - MCP server starting...
+2025-05-11 15:04:10,460 - mcp_server - INFO - MCP server starting...
+2025-05-11 15:04:10,561 - mcp_server.resources.apis - INFO - Registered API resources: default:weather_api, default:news_api
+2025-05-11 15:04:10,562 - mcp_server.prompts.templates - INFO - Registered prompt templates: default:document_summarization, default:sentiment_analysis, default:entity_extraction
+2025-05-11 15:04:10,566 - mcp_server - INFO - Registering MCP components...
+2025-05-11 15:04:10,566 - mcp_server - INFO - Registering tools from analysis
+2025-05-11 15:04:10,567 - mcp_server - INFO - Registering tools from document
+2025-05-11 15:04:10,568 - mcp_server - INFO - Registering tools from summarization
+2025-05-11 15:04:10,568 - mcp_server - INFO - Registering tools from search
+2025-05-11 15:04:10,568 - mcp_server - ERROR - Error registering tools from search: name 'Context' is not defined
+2025-05-11 15:04:11,929 - mcp_server - INFO - Registering tools from agent_tools
+2025-05-11 15:04:11,931 - mcp_server - INFO - Registering tools from reporting
+2025-05-11 15:04:11,932 - mcp_server - WARNING - Integrations directory not found: /Users/rameshpilli/Developer/mcp-server-01/app/integrations
+2025-05-11 15:04:11,932 - mcp_server - WARNING - Module apis has no register_resources function
+2025-05-11 15:04:11,933 - mcp_server - WARNING - Module templates has no register_prompts function
+2025-05-11 15:04:11,940 - mcp_server - INFO - Agent module registration has no register_components function
+2025-05-11 15:04:11,940 - mcp_server - INFO - Component registration complete
+2025-05-11 15:04:11,943 - mcp_server.memory - INFO - Connected to Redis at localhost:6379
+2025-05-11 15:04:11,943 - mcp_server - INFO - Redis connection successful, memory management enabled
+2025-05-11 15:04:14,194 - mcp_server - ERROR - Error in chat_start | Error: object NoneType can't be used in 'await' expression | Session: chat_1746990254
+2025-05-11 15:04:18,468 - mcp_server - ERROR - Error in chat_start | Error: object NoneType can't be used in 'await' expression | Session: chat_1746990258
+2025-05-11 15:04:20,497 - mcp_server - ERROR - Error in message_processing | Error: object list can't be used in 'await' expression | Session: None
+2025-05-11 15:04:43,681 - mcp_server - ERROR - Error in chat_start | Error: object NoneType can't be used in 'await' expression | Session: chat_1746990283
+2025-05-11 15:04:53,915 - mcp_server - ERROR - Error in message_processing | Error: object list can't be used in 'await' expression | Session: None
+2025-05-11 19:01:40,478 - mcp_server - ERROR - Error in chat_start | Error: object NoneType can't be used in 'await' expression | Session: chat_1747004500

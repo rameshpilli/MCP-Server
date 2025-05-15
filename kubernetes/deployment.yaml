@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-server
+  labels:
+    app: mcp-server
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: mcp-server
+  template:
+    metadata:
+      labels:
+        app: mcp-server
+    spec:
+      containers:
+      - name: mcp-server
+        image: mcp-server:latest
+        ports:
+        - containerPort: 8000
+        env:
+        - name: COHERE_MCP_SERVER_HOST
+          value: "0.0.0.0"
+        - name: COHERE_MCP_SERVER_PORT
+          value: "8000"
+        - name: TRANSPORT
+          value: "sse"
+        - name: DEBUG
+          value: "false"
+        - name: REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: mcp-config
+              key: redis_host
+        - name: REDIS_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: mcp-config
+              key: redis_port
+        - name: COHERE_INDEX_NAME
+          valueFrom:
+            secretKeyRef:
+              name: mcp-secrets
+              key: cohere_index_name
+        - name: COHERE_SERVER_BEARER_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: mcp-secrets
+              key: cohere_server_bearer_token
+        - name: LLM_OPENAI_MODEL
+          valueFrom:
+            configMapKeyRef:
+              name: mcp-config
+              key: llm_model
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        readinessProbe:
+          httpGet:
+            path: /api/v1/config
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /api/v1/config
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 20 
