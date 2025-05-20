@@ -7,19 +7,17 @@ from typing import Dict, Any, List, Optional
 from pydantic import BaseModel
 
 from .config import Config
+from app.utils.logging import setup_logging
 from .client import mcp_client
 from .agent.registration import router as agent_router
 from .mcp_bridge import MCPBridge
 from app.agents.manager import Agent, AgentCapability, agent_registry
+from app.registry.tools import ToolDefinition, registry as tool_registry
+import importlib
 
-# Setup logging
-logger = logging.getLogger('mcp_app')
-logger.setLevel(logging.INFO)
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-handler = logging.StreamHandler()
-handler.setFormatter(formatter)
-logger.addHandler(handler)
-logger.info('Starting MCP API server')
+# Setup logging using centralized configuration
+logger = setup_logging("mcp_app")
+logger.info("Starting MCP API server")
 
 # Create config instance
 config = Config()
@@ -82,6 +80,21 @@ class RouteRequestResponse(BaseModel):
     agent_name: Optional[str]
     confidence: Optional[float]
     message: str
+
+class RegisterToolRequest(BaseModel):
+    name: str
+    description: str
+    module: str
+    function: str
+    namespace: str = "default"
+    input_schema: Dict[str, Any] = {}
+    output_schema: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = {}
+
+
+class ExecuteToolRequest(BaseModel):
+    parameters: Dict[str, Any] = {}
+    namespace: Optional[str] = None
 
 @app.get("/")
 async def root():
@@ -150,20 +163,42 @@ async def process_with_routing(message: str, routing: Dict[str, Any], session_id
     }
 
 @app.post(f"{config.API_PREFIX}/register")
-async def register_tool():
-    """
-    Register a new tool with the MCP system
-    """
-    # TODO: Implement tool registration
-    return {"status": "not implemented"}
+async def register_tool(request: RegisterToolRequest):
+    """Register a new tool with the MCP system."""
+    try:
+        module = importlib.import_module(request.module)
+        handler = getattr(module, request.function)
+        tool = ToolDefinition(
+            name=request.name,
+            description=request.description,
+            handler=handler,
+            namespace=request.namespace,
+            input_schema=request.input_schema,
+            output_schema=request.output_schema,
+            metadata=request.metadata,
+        )
+        tool_registry.register(tool)
+        return {"status": "registered", "tool": tool.full_name}
+    except Exception as e:
+        logger.error(f"Error registering tool: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
 
 @app.post(f"{config.API_PREFIX}/tool/{{tool_name}}")
-async def execute_tool(tool_name: str):
-    """
-    Execute a specific tool
-    """
-    # TODO: Implement tool execution
-    return {"status": "not implemented"}
+async def execute_tool(tool_name: str, request: ExecuteToolRequest):
+    """Execute a specific tool."""
+    try:
+        tool = tool_registry.get_tool(tool_name, namespace=request.namespace)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Tool {tool_name} not found")
+
+    from fastmcp import Context
+    ctx = Context({})
+    try:
+        result = await tool.handler(ctx, **request.parameters)
+        return {"status": "success", "result": result}
+    except Exception as e:
+        logger.error(f"Error executing tool {tool_name}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get(f"{config.API_PREFIX}/config")
 async def get_config():
