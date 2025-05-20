@@ -9,4 +9,5 @@ from . import document
 from . import summarization
 from . import search
 from . import reporting
-from . import analysis 
+from . import analysis
+from . import financial_workflow
