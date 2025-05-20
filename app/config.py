@@ -70,8 +70,7 @@ class Config:
     FINANCIAL_API_BASE_URL = os.getenv("FINANCIAL_API_BASE_URL", "http://localhost:8002")
     SUPPORTED_CURRENCIES = os.getenv("SUPPORTED_CURRENCIES", "USD,CAD").split(",")
 
-    # Optional path to JSON file with parameter mappings for MCPBridge
-    PARAMETER_MAPPINGS_PATH = os.getenv("PARAMETER_MAPPINGS_PATH", "")
+
 
     @classmethod
     def get_api_url(cls) -> str:
