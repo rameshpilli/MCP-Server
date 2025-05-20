@@ -70,6 +70,8 @@ class Config:
     FINANCIAL_API_BASE_URL = os.getenv("FINANCIAL_API_BASE_URL", "http://localhost:8002")
     SUPPORTED_CURRENCIES = os.getenv("SUPPORTED_CURRENCIES", "USD,CAD").split(",")
 
+
+
     @classmethod
     def get_api_url(cls) -> str:
         """Get the full API URL"""
