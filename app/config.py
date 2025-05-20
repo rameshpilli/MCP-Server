@@ -66,6 +66,10 @@ class Config:
     COMPASS_BEARER_TOKEN = os.getenv("COMPASS_BEARER_TOKEN", "")
     COMPASS_INDEX_NAME = os.getenv("COMPASS_INDEX_NAME", "mcp_routing")
 
+    # Financial Data Configuration
+    FINANCIAL_API_BASE_URL = os.getenv("FINANCIAL_API_BASE_URL", "http://localhost:8002")
+    SUPPORTED_CURRENCIES = os.getenv("SUPPORTED_CURRENCIES", "USD,CAD").split(",")
+
     @classmethod
     def get_api_url(cls) -> str:
         """Get the full API URL"""
