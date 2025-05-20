@@ -78,7 +78,7 @@ The system follows a layered architecture:
 
 ## Agent Registration
 
-The system supports registration of external agents, each with their own tools, resources, and prompts.
+The system supports registration of external agents, each with their own tools,  resources, and prompts.
 
 ### How to Register an Agent
 
