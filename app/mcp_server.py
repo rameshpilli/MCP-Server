@@ -1,390 +1,575 @@
 """
-MCP Server Module
+1. Tool Registration:
+    - Register tools with FastMCP directly (like health_check, server_info)
+    - + Client View financials tools with FastMCP
 
-This module provides the main MCP server implementation.
+2. Message Processing Flow:
+    - Receive a message via the FastAPI endpoint
+    - call process_message() with the message
+    - Old Approach:
+        - inside processing_message()
+            - call route_message() to determine with tool to use
+            - Route_message uses simple keyword matching to find relevant tool
+            - It also calls extract_params_for_tools() to get parameters from the message.
+            - Currently, extract_params_for_tools() uses hardcoded rules for parameter extraction
+        - Execute the identified tool with the extracted parameters
+        - Return the tools response
+    - New Approach:
+        - inside process_message():
+            - Use MCPBridge's route_message() which has sophisticated intent recognition
+            - MCPBridge first tries Cohere Compass to find the right tool based on Intent.
+            - If compass fails, it falls back to financial keywords, pattern matching and tool name matching.
+
+            - It calls extract_params_for_tools() to get parameters using the LLM
+        - Execute the identified tool with the LLM-extracted parameters
+        - Return the tools response
+
+3. Parameter Extraction:
+    - Old Approach:
+        - Uses hardcoded if/ else statements to extract parameters
+        - Only handles specific tools and specific parameters
+        - Very limited in what it can recognize
+    - New Approach:
+        - Uses existing extract_parameters_with_llm function from parameter_extractor.py
+        - Calls the LLM to intelligently extract parameters based on the tool's schema
+        - Provides context about financial data and valid parameter values
+        - Fall back to empty dict if extraction fails.
+        - Includes specialized handling for financial parameters.
+
+Tests:
+    1. Basic tool test:
+        - curl -X POST http://localhost:8080/mcp \
+        -H "Content-Type: application/json" \
+        -d '{"message": "list tools"}'
+
+    2. Financial query without parameters:
+        - curl -X POST http://localhost:8080/mcp \
+        -H "Content-Type: application/json" \
+        -d '{"message": "show me top clients"}'
+
+    3. Financial query with parameters:
+        - curl -X POST http://localhost:8080/mcp \
+        -H "Content-Type: application/json" \
+        -d '{"message": "show me top clients in USD for Canada region"}'
+
+    4. More Specific query:
+        - curl -X POST http://localhost:8080/mcp \
+        -H "Content-Type: application/json" \
+        -d '{"message": "what are the top gaining clients in CAD currency"}'
+
+Flow:
+    User Request → FastAPI Endpoint (/mcp POST) →
+    handle_mcp_request() →
+        process_message(message, context) →
+            MCPBridge.route_request(query, context) →
+                [Tool Selection Decision Logic:]
+                - Direct tool name matching
+                - Financial keyword detection
+                - Compass-based routing
+            _get_tool_params(tool_name, query) →
+                [Parameter Extraction:]
+                - LLM-based extraction via extract_parameters_with_llm()
+                - Fallback to rule-based extraction
+            mcp.get_tools() →
+                [Find tool by name]
+            tool.fn(ctx, **params) →
+                [Execute appropriate tool]
+            format_response(results) →
+                [Format results into user-friendly response]
+    JSON Response to User
 """
 
-import asyncio
-import logging
-from contextlib import asynccontextmanager
-from collections.abc import AsyncIterable
-from dataclasses import dataclass
+# app/mcp_server.py
 import os
-from pathlib import Path
-from dotenv import load_dotenv
 import sys
-import importlib
+import json
+import asyncio
+import argparse
+import logging
+from pathlib import Path
 from fastmcp import FastMCP, Context
-from typing import Any, Dict, Optional
-from app.registry.tools import registry as tool_registry
-from app.registry.resources import registry as resource_registry
-from app.registry.prompts import registry as prompt_registry
-from app.config import config
-from app.utils.port_utils import find_available_port
-from app.utils.logging import setup_logging
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from sse_starlette.sse import EventSourceResponse
+from typing import Dict, Any
+from dotenv import load_dotenv
 
-# Add doc_reader to path
+# Set up paths
 sys.path.append(str(Path(__file__).parent.parent))
 from app.config import config
+from app.stdio_handler import run_stdio_mode
+from app.sse_handler import sse_endpoint, sse_process, sse_list_tools, sse_call_tool
 
-# Setup logging using centralized configuration
-logger = setup_logging("mcp_server")
-logger.info("MCP server starting...")
-
-# Load environment variables
+# Environment variables
 load_dotenv()
 
-# Import registries after loading environment variables
-from app.registry import tool_registry, resource_registry, prompt_registry
-import app.tools
-import app.resources
-import app.prompts
+# Set up logging
+logger = logging.getLogger("mcp_server")
+logger.setLevel(getattr(logging, config.LOG_LEVEL, logging.INFO))
+handler = logging.StreamHandler()
+handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+logger.addHandler(handler)
 
-@dataclass
-class ServerContext:
-    """Context for the MCP Server"""
-    # Registries
-    tool_registry: tool_registry.__class__
-    resource_registry: resource_registry.__class__
-    prompt_registry: prompt_registry.__class__
-    bridge: Any  # Will be set to MCPBridge instance
-
-@asynccontextmanager
-async def mcp_server_lifespan(server: FastMCP) -> AsyncIterable[ServerContext]:
-    """
-    Manage the MCP Server lifespan.
-
-    Args:
-        server: The FastMCP server instance
-    Yields:
-        ServerContext: The context for the MCP server.
-    """
-    logger.info('Starting MCP Server')
-    
-    try:
-        # Signal that we're starting up - useful for readiness probes
-        if config.IN_KUBERNETES:
-            # Create a startup marker that could be used by health checks
-            startup_file = '/tmp/mcp_server_ready'
-            with open(startup_file, 'w') as f:
-                f.write('ready')
-            logger.info(f"Created startup marker at {startup_file}")
-        
-        # Import MCPBridge here to avoid circular import
-        from app.mcp_bridge import MCPBridge
-        bridge = MCPBridge()
-        logger.info("MCPBridge initialized successfully")
-            
-        # Initialize any resources needed for the server lifetime
-        yield ServerContext(
-            tool_registry=tool_registry,
-            resource_registry=resource_registry,
-            prompt_registry=prompt_registry,
-            bridge=bridge
-        )
-    except Exception as e:
-        logger.error(f"Error during MCP server startup: {str(e)}", exc_info=True)
-        raise
-    finally:
-        # Clean up resources
-        logger.info('Shutting down MCP Server')
-        
-        # Remove startup marker if it exists
-        if config.IN_KUBERNETES:
-            startup_file = '/tmp/mcp_server_ready'
-            if os.path.exists(startup_file):
-                os.remove(startup_file)
-                logger.info(f"Removed startup marker at {startup_file}")
-
-# Create the MCP server
+# MCP server
 mcp = FastMCP(
-    config.SERVER_NAME,
-    description=config.SERVER_DESCRIPTION,
-    lifespan=mcp_server_lifespan,
-    host=config.MCP_SERVER_HOST if hasattr(config, 'MCP_SERVER_HOST') else "localhost",
-    port=config.MCP_SERVER_PORT if hasattr(config, 'MCP_SERVER_PORT') else "8080"
+    "MCP Server",
+    description="MCP Server for tool execution"
 )
 
-# Register message handler
-async def process_message(message: str, context: Optional[Dict[str, Any]] = None) -> str:
-    """
-    Process incoming messages using the MCPBridge for tool execution and response generation.
-    """
-    try:
-        # Create a Context object
-        ctx = Context(context or {})
-        
-        # Log the incoming message
-        logger.info(f"Step: message_received | Message: {message} | Session: {ctx.session_id} | Status: processing")
 
-        # Route the request using the bridge
-        routing_result = await ctx.bridge.route_request(message, ctx.context)
-
-        # Execute tools based on routing result
-        results = []
-        for endpoint in routing_result["endpoints"]:
-            if endpoint["type"] == "tool":
-                try:
-                    logger.info(f"Executing tool: {endpoint['name']}")
-                    result = await ctx.bridge.mcp.execute_tool(
-                        endpoint["name"],
-                        endpoint.get("params", {}),
-                        ctx.context
-                    )
-                    results.append(result)
-                except Exception as e:
-                    logger.error(
-                        f"Error in tool_execution_{endpoint['name']} | Error: {e} | Session: {ctx.session_id}")
-
-        # Format response based on results
-        if results:
-            response_parts = ["Based on the tool execution results:"]
-            for i, result in enumerate(results, 1):
-                response_parts.append(f"{i}. {result}")
-            response_text = "\n".join(response_parts)
-        else:
-            response_text = "I've processed your request but didn't find any specific results to share."
-
-        # Log the response
-        logger.info(
-            f"Step: mcp_process_complete | Message: {response_text[:100]}... | Session: {ctx.session_id} | Status: success")
-
-        return response_text
-
-    except Exception as e:
-        logger.error(f"Error processing message: {e}")
-        return f"I encountered an error while processing your request: {str(e)}"
-
-# Set the process method
-mcp.process = process_message
-
-def register_all_components():
-    """Register all components (tools, integrations, resources, and prompts)"""
-    logger.info("Registering MCP components...")
-
-    # 1. Register tools from tools directory
-    tools_dir = Path(__file__).parent / "tools"
-    if not tools_dir.exists():
-        logger.warning(f"Tools directory not found: {tools_dir}")
-    else:
-        # Register tools from each module
-        tool_modules = [f.stem for f in tools_dir.glob("*.py") if f.stem != "__init__"]
-        for module_name in tool_modules:
-            try:
-                # Import the module
-                module = importlib.import_module(f"app.tools.{module_name}")
-
-                # Register tools if the module has a register_tools function
-                if hasattr(module, "register_tools"):
-                    logger.info(f"Registering tools from {module_name}")
-                    module.register_tools(mcp)
-                else:
-                    logger.warning(f"Module {module_name} has no register_tools function")
-            except Exception as e:
-                logger.error(f"Error registering tools from {module_name}: {e}")
-
-    # 2. Register tools from integrations directory
-    integrations_dir = Path(__file__).parent / "integrations"
-    if not integrations_dir.exists():
-        logger.warning(f"Integrations directory not found: {integrations_dir}")
-    else:
-        # Register tools from each integration module
-        integration_modules = [f.stem for f in integrations_dir.glob("*.py") if f.stem != "__init__"]
-        for module_name in integration_modules:
-            try:
-                # Import the module
-                module = importlib.import_module(f"app.integrations.{module_name}")
-
-                # Register tools if the module has a register_tools function
-                if hasattr(module, "register_tools"):
-                    logger.info(f"Registering integration tools from {module_name}")
-                    module.register_tools(mcp)
-                else:
-                    logger.info(f"Integration module {module_name} has no register_tools function")
-            except Exception as e:
-                logger.error(f"Error registering integration tools from {module_name}: {e}")
-
-    # 3. Register resources from resources directory
-    resources_dir = Path(__file__).parent / "resources"
-    if not resources_dir.exists():
-        logger.warning(f"Resources directory not found: {resources_dir}")
-    else:
-        # Register resources from each module
-        resource_modules = [f.stem for f in resources_dir.glob("*.py") if f.stem != "__init__"]
-        for module_name in resource_modules:
-            try:
-                # Import the module
-                module = importlib.import_module(f"app.resources.{module_name}")
-
-                # Register resources if the module has a register_resources function
-                if hasattr(module, "register_resources"):
-                    logger.info(f"Registering resources from {module_name}")
-                    module.register_resources(mcp)
-                else:
-                    logger.warning(f"Module {module_name} has no register_resources function")
-            except Exception as e:
-                logger.error(f"Error registering resources from {module_name}: {e}")
-
-    # 4. Register prompts from prompts directory
-    prompts_dir = Path(__file__).parent / "prompts"
-    if not prompts_dir.exists():
-        logger.warning(f"Prompts directory not found: {prompts_dir}")
-    else:
-        # Register prompts from each module
-        prompt_modules = [f.stem for f in prompts_dir.glob("*.py") if f.stem != "__init__"]
-        for module_name in prompt_modules:
-            try:
-                # Import the module
-                module = importlib.import_module(f"app.prompts.{module_name}")
-
-                # Register prompts if the module has a register_prompts function
-                if hasattr(module, "register_prompts"):
-                    logger.info(f"Registering prompts from {module_name}")
-                    module.register_prompts(mcp)
-                else:
-                    logger.warning(f"Module {module_name} has no register_prompts function")
-            except Exception as e:
-                logger.error(f"Error registering prompts from {module_name}: {e}")
-
-    # 5. Register agent components from agent directory
-    agent_dir = Path(__file__).parent / "agent"
-    if not agent_dir.exists():
-        logger.warning(f"Agent directory not found: {agent_dir}")
-    else:
-        # Register agent components from each module
-        agent_modules = [f.stem for f in agent_dir.glob("*.py") if f.stem != "__init__"]
-        for module_name in agent_modules:
-            try:
-                # Import the module
-                module = importlib.import_module(f"app.agent.{module_name}")
-
-                # Register agent components if the module has a register_components function
-                if hasattr(module, "register_components"):
-                    logger.info(f"Registering agent components from {module_name}")
-                    module.register_components(mcp)
-                else:
-                    logger.info(f"Agent module {module_name} has no register_components function")
-            except Exception as e:
-                logger.error(f"Error registering agent components from {module_name}: {e}")
-
-    logger.info("Component registration complete")
-
-
-# Server info tool with K8s awareness - useful for debugging and health checks
-@mcp.tool()
-async def server_info(ctx: Context, namespace: str = None) -> str:
-    """Get information about the MCP server and available components."""
-    try:
-        # Get registries from context
-        tool_reg = ctx.request_context.lifespan_context.tool_registry
-        resource_reg = ctx.request_context.lifespan_context.resource_registry
-        prompt_reg = ctx.request_context.lifespan_context.prompt_registry
-
-        # Get components
-        tools = tool_reg.list_tools(namespace) if hasattr(tool_reg, 'list_tools') else {}
-        resources = resource_reg.list_resources(namespace) if hasattr(resource_reg, 'list_resources') else {}
-        prompts = prompt_reg.list_prompts(namespace) if hasattr(prompt_reg, 'list_prompts') else {}
-
-        # Format tool list with proper escaping
-        tool_list = []
-        for name, desc in tools.items():
-            # Escape the colon in markdown
-            escaped_name = name.replace(':', '\\:')
-            tool_list.append(f"- **{escaped_name}**: {desc}")
-        tool_text = "\n".join(tool_list) if tool_list else "No tools registered"
-
-        # Format resource list
-        resource_list = []
-        for name, desc in resources.items():
-            escaped_name = name.replace(':', '\\:')
-            resource_list.append(f"- **{escaped_name}**: {desc}")
-        resource_text = "\n".join(resource_list) if resource_list else "No resources registered"
-
-        # Format prompt list
-        prompt_list = []
-        for name, desc in prompts.items():
-            escaped_name = name.replace(':', '\\:')
-            prompt_list.append(f"- **{escaped_name}**: {desc}")
-        prompt_text = "\n".join(prompt_list) if prompt_list else "No prompt templates registered"
-
-        # Add environment info for debugging
-        environment_info = "Local Development"
-        if config.IN_KUBERNETES:
-            environment_info = f"Kubernetes (Pod: {config.POD_NAME}, Namespace: {config.NAMESPACE})"
-
-        return f"""
-# MCP Server Information
-
-**Environment**: {environment_info}
-**Host**: {config.MCP_SERVER_HOST}
-**Port**: {config.MCP_SERVER_PORT}
-
-## Available Components
-
-### Tools
-{tool_text}
-
-### Resources
-{resource_text}
-
-### Prompt Templates
-{prompt_text}
-"""
-    except Exception as e:
-        logger.error(f"Error getting server info: {e}")
-        return f"Error getting server info: {e}"
-
-
-# Register all components
-register_all_components()
-
-
-# Add health check endpoint - critical for Kubernetes
+# Register a basic tool
 @mcp.tool()
 async def health_check(ctx: Context) -> str:
-    """
-    Health check endpoint for Kubernetes liveness and readiness probes.
-
-    This tool allows Kubernetes to monitor the health of the MCP server.
-    """
-    # Simply returning a success message is enough for a basic health check
-    # In a more advanced implementation, you might check dependencies too
+    """Health check endpoint"""
     return "MCP Server is healthy"
 
 
-async def main():
-    """Run the MCP server"""
-    host = config.MCP_SERVER_HOST if hasattr(config, 'MCP_SERVER_HOST') else "localhost"
-    configured_port = config.MCP_SERVER_PORT if hasattr(config, 'MCP_SERVER_PORT') else 8080
+@mcp.tool()
+async def server_info(ctx: Context) -> str:
+    """Get server information"""
+    return f"""
+# MCP Server Information
+**Host**: {config.MCP_SERVER_HOST}
+**Port**: {config.MCP_SERVER_PORT}
+"""
 
-    # In Kubernetes, we use the configured port directly
-    if config.IN_KUBERNETES:
-        available_port = configured_port
-        logger.info(f"Running in Kubernetes, using assigned port {available_port}")
-    else:
-        # For local development, find an available port
-        available_port = find_available_port(configured_port)
-        if not available_port:
-            logger.error(
-                f"Could not find an available port after trying {configured_port} through {configured_port + 9}")
-            return
+# Import and register clientview_financials tools
+try:
+    import app.tools.clientview_financials
 
-        # If we had to use a different port, log it
-        if available_port != configured_port:
-            logger.warning(f"Port {configured_port} was not available. Using port {available_port} instead.")
+    app.tools.clientview_financials.register_tools(mcp)
+    logger.info("Registered: clientview_financials")
+except Exception as e:
+    logger.error(f"Tool registration failed: {e}")
 
-            # Update the config.MCP_SERVER_PORT to the new port
-            config.MCP_SERVER_PORT = available_port
+# Add debugging tool
+@mcp.tool()
+async def list_tools(ctx: Context) -> str:
+    """List all available tools and their schemas"""
+    try:
+        tools = await mcp.get_tools()
+        result = "# Available Tools\n\n"
 
-    logger.info(f"Starting MCP server on {host}:{available_port}")
+        for name, tool in tools.items():
+            result += f"## {name}\n"
+            result += f"Description: {getattr(tool, 'description', 'No description')}\n\n"
 
-    # In Kubernetes, always use SSE transport - better for containers
-    transport = "sse" if config.IN_KUBERNETES else os.getenv("TRANSPORT", "sse")
-    if transport == "sse":
-        await mcp.run_sse_async(host=host, port=available_port)
-    else:
-        await mcp.run_stdio_async()
+            # Try to get schema
+            schema = None
+            for attr in ['input_schema', 'schema', 'parameters']:
+                if hasattr(tool, attr):
+                    schema = getattr(tool, attr)
+                    break
+
+            if schema:
+                result += f"Parameters:\n```json\n{json.dumps(schema, indent=2)}\n```\n\n"
+            else:
+                result += "No parameter schema available.\n\n"
+
+        return result
+    except Exception as e:
+        logger.error(f"Error listing tools: {e}")
+        return f"Error listing tools: {str(e)}"
+
+# Setup the bridge
+try:
+    from app.mcp_bridge import MCPBridge
+
+    # Create a bridge instance
+    bridge = MCPBridge()
+    bridge.mcp = mcp
+    logger.info("MCP-Bridge initialized Successfully")
+except Exception as e:
+    logger.error(f"MCP-Bridge initialization failed: {e}")
+    bridge = None
+
+# Process message using the bridge
+async def process_message(message: str, context: Dict[str, Any] = None) -> str:
+    """Process a message using the MCPBridge"""
+    try:
+        logger.info(f"Processing message: {message}")
+
+        # Route the message using the bridge
+        routing_result = await bridge.route_request(message, context or {})
+        logger.info(f"Routing result: {routing_result}")
+
+        # Execute tools from endpoints
+        results = []
+        for endpoint in routing_result["endpoints"]:
+            if endpoint["type"] == "tool":
+                tool_name = endpoint["name"]
+                params = endpoint.get("params", {})
+
+                logger.info(f"Executing tool: {tool_name} with params: {params}")
+
+                # Get tools
+                tools = await mcp.get_tools()
+                if tool_name in tools:
+                    # Create context
+                    ctx = Context(context or {})
+
+                    try:
+                        # Execute tool with parameters
+                        if params:
+                            # Tools expect named parameters
+                            result = await tools[tool_name].fn(ctx, **params)
+                        else:
+                            # No parameters
+                            result = await tools[tool_name].fn(ctx)
+
+                        results.append(result)
+                    except Exception as e:
+                        error_msg = f"Error executing tool {tool_name}: {str(e)}"
+                        logger.error(error_msg, exc_info=True)
+                        results.append(error_msg)
+                else:
+                    logger.warning(f"Tool not found: {tool_name}")
+
+        # Format response based on results
+        if results:
+            if len(results) == 1:
+                # Just return the single result directly
+                return results[0]
+            else:
+                # Format multiple results
+                response_parts = ["Multiple tool results:"]
+                for i, result in enumerate(results, 1):
+                    response_parts.append(f"{i}. {result}")
+                return "\n\n".join(response_parts)
+        else:
+            return "I couldn't find any tools to execute for your request."
+
+    except Exception as e:
+        logger.error(f"Error processing message: {e}", exc_info=True)
+        return f"Error processing message: {str(e)}"
+
+# Create FastAPI app factory
+# def main_factory():
+#     """Create and return the FastAPI application"""
+#     app = FastAPI()
+#
+#     @app.get("/ping")
+#     async def ping():
+#         return {"status": "ok", "server": "MCP Server"}
+#
+#     @app.post("/mcp")
+#     async def handle_mcp_request(request: Request):
+#         try:
+#             data = await request.json()
+#             if "message" not in data:
+#                 return {"error": "Missing 'message' field"}
+#
+#             message = data["message"]
+#             context = data.get("context", {})
+#
+#             result = await process_message(message, context)
+#             return {"response": result}
+#
+#         except Exception as e:
+#             logger.error(f"Error handling MCP request: {e}")
+#             return {"error": f"Error processing request: {str(e)}"}
+#
+#     return app
+
+
+# Run the server directly if this file is executed
+# if __name__ == "__main__":
+#     import uvicorn
+#
+#     uvicorn.run(main_factory(), host="0.0.0.0", port=8080)
+
+# uvicorn app.mcp_server:main_factory --host 0.0.0.0 --port 8080 --factory
+
+
+def main_factory():
+    """Create and return the FastAPI application"""
+    app = FastAPI()
+
+    # Add CORS middleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+
+    # Keep your existing endpoints
+    @app.get("/ping")
+    async def ping():
+        return {"status": "ok", "server": "MCP Server"}
+
+
+    @app.post("/mcp")
+    async def handle_mcp_request(request: Request):
+        try:
+            data = await request.json()
+            if "message" not in data:
+                return {"error": "Missing 'message' field"}
+
+            message = data["message"]
+            context = data.get("context", {})
+
+            result = await process_message(message, context)
+            return {"response": result}
+        except Exception as e:
+            logger.error(f"Error handling MCP request: {e}")
+            return {"error": f"Error processing request: {str(e)}"}
+
+
+    # Add SSE endpoint (this is what Chainlit connects to)
+    @app.get("/sse")
+    async def handle_sse(request: Request):
+        return await sse_endpoint(request, process_message, get_tools_func=mcp.get_tools)
+
+
+    # Add endpoints for tool listing and execution
+    @app.get("/tools")
+    async def handle_list_tools():
+        try:
+            tools = await mcp.get_tools()
+
+            # Format tools in the way Chainlit expects them
+            formatted_tools = []
+            for name, tool in tools.items():
+                # Get input schema
+                input_schema = getattr(tool, 'input_schema', {})
+
+                # Handle possible function call schema format
+                if not input_schema and hasattr(tool, 'fn'):
+                    # Try to extract parameter info from function
+                    import inspect
+                    sig = inspect.signature(tool.fn)
+                    input_schema = {
+                        "type": "object",
+                        "properties": {}
+                    }
+
+                    # Skip first parameter (usually ctx/context)
+                    params = list(sig.parameters.items())
+                    if params:
+                        params = params[1:]  # Skip first parameter (ctx)
+
+                    for param_name, param in params:
+                        param_info = {
+                            "type": "string"  # Default to string
+                        }
+                        # Get annotation if available
+                        if param.annotation != inspect.Parameter.empty:
+                            if param.annotation == str:
+                                param_info["type"] = "string"
+                            elif param.annotation == int:
+                                param_info["type"] = "integer"
+                            elif param.annotation == float:
+                                param_info["type"] = "number"
+                            elif param.annotation == bool:
+                                param_info["type"] = "boolean"
+
+                        # Get default if available
+                        if param.default != inspect.Parameter.empty:
+                            param_info["default"] = param.default
+
+                        input_schema["properties"][param_name] = param_info
+
+                formatted_tools.append({
+                    "name": name,
+                    "description": getattr(tool, 'description', 'No description'),
+                    "inputSchema": input_schema
+                })
+
+            # Return JSON-RPC response
+            return {
+                "jsonrpc": "2.0",
+                "result": {
+                    "tools": formatted_tools
+                },
+                "id": None  # Chainlit will send an ID, but we're handling GET requests here
+            }
+        except Exception as e:
+            logger.error(f"Error listing tools: {str(e)}")
+            return {
+                "jsonrpc": "2.0",
+                "error": {
+                    "code": -32000,
+                    "message": str(e)
+                },
+                "id": None
+            }
+
+    # Add process endpoint for message handling
+    @app.post("/process")
+    async def handle_process_message(request: Request):
+        try:
+            # Parse the request body
+            data = await request.json()
+
+            # Extract JSON-RPC fields
+            if "jsonrpc" not in data or data["jsonrpc"] != "2.0" or "method" not in data:
+                return {
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": -32600,
+                        "message": "Invalid Request"
+                    },
+                    "id": data.get("id")
+                }
+
+            # Check if the method is 'process'
+            if data["method"] != "process":
+                return {
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": -32601,
+                        "message": f"Method '{data['method']}' not found"
+                    },
+                    "id": data.get("id")
+                }
+
+            # Extract params
+            params = data.get("params", {})
+            message = params.get("message", "")
+            context = params.get("context", {})
+
+            logger.info(f"Processing message: {message[:50]}...")
+
+            # Process the message
+            result = await process_message(message, context)
+
+            # Return JSON-RPC response
+            return {
+                "jsonrpc": "2.0",
+                "result": {
+                    "response": result
+                },
+                "id": data.get("id")
+            }
+        except Exception as e:
+            logger.error(f"Error processing message: {e}")
+            return {
+                "jsonrpc": "2.0",
+                "error": {
+                    "code": -32000,
+                    "message": str(e)
+                },
+                "id": None
+            }
+
+    # Add call_tool endpoint for tool execution
+    @app.post("/call_tool")
+    async def handle_call_tool(request: Request):
+        try:
+            # Parse the request body
+            data = await request.json()
+
+            # Extract JSON-RPC fields
+            if "jsonrpc" not in data or data["jsonrpc"] != "2.0" or "method" not in data:
+                return {
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": -32600,
+                        "message": "Invalid Request"
+                    },
+                    "id": data.get("id")
+                }
+
+            # Check if the method is 'call_tool'
+            if data["method"] != "call_tool":
+                return {
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": -32601,
+                        "message": f"Method '{data['method']}' not found"
+                    },
+                    "id": data.get("id")
+                }
+
+            # Extract params
+            params = data.get("params", {})
+            tool_name = params.get("tool", "")
+            parameters = params.get("parameters", {})
+
+            if not tool_name:
+                return {
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": -32602,
+                        "message": "Invalid params: Missing tool name"
+                    },
+                    "id": data.get("id")
+                }
+
+            logger.info(f"Calling tool: {tool_name} with parameters: {parameters}")
+
+            # Get available tools
+            tools = await mcp.get_tools()
+
+            if tool_name not in tools:
+                return {
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": -32602,
+                        "message": f"Tool '{tool_name}' not found"
+                    },
+                    "id": data.get("id")
+                }
+
+            # Import Context to avoid circular imports
+            from fastmcp import Context
+
+            # Create a context for the tool
+            ctx = Context({})
+
+            # Execute the tool
+            result = await tools[tool_name].fn(ctx, **parameters)
+
+            # Return JSON-RPC response
+            return {
+                "jsonrpc": "2.0",
+                "result": {
+                    "result": result
+                },
+                "id": data.get("id")
+            }
+        except Exception as e:
+            logger.error(f"Error calling tool: {e}")
+            return {
+                "jsonrpc": "2.0",
+                "error": {
+                    "code": -32000,
+                    "message": str(e)
+                },
+                "id": data.get("id", None)
+            }
+
+    # Test SSE endpoint
+    @app.get("/test-sse")
+    async def test_sse(request: Request):
+        """Simple SSE test endpoint"""
+
+        async def event_generator():
+            yield {"event": "message", "data": "Connected to MCP Server"}
+            await asyncio.sleep(1)
+            yield {"event": "message", "data": "Test message 1"}
+            await asyncio.sleep(1)
+            yield {"event": "message", "data": "Test message 2"}
+
+        return EventSourceResponse(event_generator())
+
+
+    return app
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description="MCP Server")
+    parser.add_argument("--mode", choices=["http", "stdio"], default="http",
+                        help="Server mode: 'http' for HTTP/SSE or 'stdio' for STDIO transport")
+    args = parser.parse_args()
+
+    if args.mode == "stdio":
+        # Run in STDIO mode
+        asyncio.run(run_stdio_mode(mcp, process_message))
+    else:
+        # Run in HTTP/SSE mode
+        import uvicorn
+        uvicorn.run(main_factory(), host="0.0.0.0", port=8080)
