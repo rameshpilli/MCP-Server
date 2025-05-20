@@ -1,9 +1,10 @@
 import socket
 import logging
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-def find_available_port(start_port: int, max_attempts: int = 10) -> int:
+def find_available_port(start_port: int, max_attempts: int = 10) -> Optional[int]:
     """
     Find an available port starting from start_port.
     
@@ -12,7 +13,7 @@ def find_available_port(start_port: int, max_attempts: int = 10) -> int:
         max_attempts (int): Maximum number of ports to try after start_port
         
     Returns:
-        int: An available port number, or None if no port is available
+        Optional[int]: An available port number, or ``None`` if no port is available
     """
     for port in range(start_port, start_port + max_attempts):
         try:
