@@ -183,6 +183,16 @@ class MCPBridge:
             self._update_param_cache(cache_key, params)
         return params
 
+    async def extract_parameters(self, message: str, tool_name: str) -> Dict[str, Any]:
+        """Public helper to extract parameters for a tool using an LLM."""
+        tool = self._get_tool_from_registry(tool_name)
+        if not tool:
+            return {}
+        schema = getattr(tool, "input_schema", {})
+        if not schema:
+            return {}
+        return await extract_parameters_with_llm(message, tool_name, schema)
+
     def _get_cache_key(self, tool_name: str, query: str) -> str:
         combined = f"{tool_name}:{query.lower()}"
         return hashlib.md5(combined.encode()).hexdigest()

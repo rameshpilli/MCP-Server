@@ -42,7 +42,7 @@ The system follows a layered architecture:
 
 ### Components
 
-1. **Chainlit UI (ui/chainlit_app.py)**
+1. **Chainlit UI (ui/app.py)**
    - Web interface for user interaction
    - Sends messages to the MCP client
 
@@ -166,7 +166,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 3. Start the Chainlit UI:
 ```bash
-chainlit run ui/chainlit_app.py
+chainlit run ui/app.py
 ```
 
 4. Access the UI at http://localhost:8501
@@ -189,6 +189,13 @@ Place documents in the `docs/` directory. The system supports Markdown (`.md`) a
 
 Edit `app/config.py` to change configuration settings.
 
+### Logging
+
+Logging behavior is controlled by two environment variables:
+
+- `LOG_LEVEL` sets the verbosity (default `INFO`).
+- `LOG_TO_STDOUT_ONLY` if set, disables file logging and writes logs only to stdout.
+
 ## Project Structure
 
 ```
@@ -207,7 +214,7 @@ mcp-app/
 │   │   └── summarizer.py      # Example tool that processes and summarizes information.
 │   └── chaining.py            # Orchestrates multiple tools working together.
 ├── ui/
-│   └── chainlit_app.py        # A friendly chat interface for users to interact with the system.
+│   └── app.py                 # A friendly chat interface for users to interact with the system.
 ├── .env                       # Configuration secrets and API keys (keep this safe!).
 ├── Dockerfile                 # Instructions for packaging the app into a container.
 ├── requirements.txt           # List of Python packages needed to run the app.

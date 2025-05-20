@@ -3,6 +3,25 @@ import chainlit as cl
 from typing import Dict, Any, List
 from mcp import ClientSession
 from mcp.types import CallToolResult, TextContent
+import os
+import sys
+from pathlib import Path
+import time
+import json
+from dotenv import load_dotenv
+
+sys.path.append(str(Path(__file__).parent.parent))
+from app.config import config
+from app.utils.logger import logger, log_interaction, log_error
+
+try:
+    from app.memory import ShortTermMemory
+    test_mem = ShortTermMemory()
+    MEMORY_AVAILABLE = test_mem.redis_client is not None
+except Exception:
+    MEMORY_AVAILABLE = False
+
+load_dotenv()
 
 LM_STUDIO_BASE_URL = "http://localhost:1234/v1"
 LM_STUDIO_API_KEY = "lm-studio"
@@ -17,10 +36,14 @@ settings = {
 }
 
 mcp_tools_cache = {}
+mcp_connection = None
 
 
 @cl.on_chat_start
 async def start():
+    global mcp_connection
+    session_id = f"chat_{int(time.time())}"
+
     cl.user_session.set(
         "message_history",
         [
@@ -31,12 +54,54 @@ async def start():
         ],
     )
 
+    if MEMORY_AVAILABLE:
+        memory = ShortTermMemory(session_id=session_id)
+        cl.user_session.set("memory", memory)
+        cl.user_session.set("session_id", session_id)
+        await memory.add_message("system", "Chat session initialized")
+        logger.info(f"Memory initialized for session {session_id}")
+
+    try:
+        mcp_connection = await cl.connect_mcp(
+            transport="sse",
+            url=f"http://{config.MCP_SERVER_HOST}:8081",
+        )
+        logger.info("MCP SSE connection established")
+    except Exception as e:
+        logger.warning(f"Failed SSE connection: {e}")
+        try:
+            mcp_connection = await cl.connect_mcp(
+                transport="stdio",
+                command=["python", "-m", "app.mcp_server"],
+            )
+            logger.info("MCP stdio connection established")
+        except Exception as e:
+            logger.error(f"Failed stdio connection: {e}")
+            mcp_connection = None
+
+    if mcp_connection:
+        cl.user_session.set("mcp_connection", mcp_connection)
+        tools = await mcp_connection.get_tools()
+        if tools:
+            mcp_tools_cache[mcp_connection.name] = tools
+            cl.user_session.set("mcp_tools", {mcp_connection.name: tools})
+    else:
+        await cl.Message(
+            content="Warning: MCP server is not accessible. Some features may be limited."
+        ).send()
+
     await cl.Message(
-        content="Welcome! I'm using a local model running in LM Studio with MCP integration. Make sure that: \n"
-        "1. LM Studio is running \n"
-        "2. A default model is loaded \n"
-        "3. The LM Studio server has started \n"
+        content=(
+            f"Welcome to the MCP Server UI! I'm using {settings['model']} and ready to help you.\n\n"
+            "Available features:\n"
+            "1. Chat with AI assistant\n"
+            "2. Execute tools and commands\n"
+            "3. View tool execution history\n"
+            "4. Session management"
+        )
     ).send()
+
+    log_interaction(step="chat_start", message="Chat session initialized", session_id=session_id, status="success")
 
 
 @cl.on_mcp_connect
@@ -287,3 +352,49 @@ async def on_message(message: cl.Message):
 
 if __name__ == "__main__":
     print("Starting Chainlit app with LM Studio and MCP integration...")
+
+@cl.on_stop
+async def on_stop():
+    """Clean up when the chat session ends"""
+    global mcp_connection
+    if mcp_connection:
+        try:
+            await mcp_connection.close()
+            mcp_connection = None
+            logger.info("MCP connection closed")
+        except Exception as e:
+            logger.error(f"Error closing MCP connection: {e}")
+
+
+@cl.action_callback("clear_chat")
+async def on_clear_chat(action):
+    """Clear chat history"""
+    session_id = cl.user_session.get("session_id")
+    try:
+        cl.user_session.set(
+            "message_history",
+            [
+                {
+                    "role": "system",
+                    "content": "You are a helpful AI assistant running locally via LM Studio. You can access tools using MCP servers.",
+                }
+            ],
+        )
+
+        if MEMORY_AVAILABLE:
+            memory = cl.user_session.get("memory")
+            if memory:
+                await memory.clear()
+
+        log_interaction(
+            step="clear_chat",
+            message="Chat history cleared",
+            session_id=session_id,
+            status="success",
+        )
+
+        await cl.Message(content="Chat history cleared").send()
+    except Exception as e:
+        log_error("clear_chat", e, session_id)
+        await cl.Message(content=f"Error clearing chat: {str(e)}").send()
+

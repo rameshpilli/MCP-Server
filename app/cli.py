@@ -76,7 +76,7 @@ def run_server(host: str, port: int, env: str):
         chainlit_cmd = [
             "chainlit",
             "run",
-            "app/chainlit_app.py",
+            "ui/app.py",
             "--host", host,
             "--port", str(port + 1)
         ]
