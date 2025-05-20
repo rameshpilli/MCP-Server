@@ -6,10 +6,8 @@ from dotenv import load_dotenv
 # Fix the import path
 sys.path.append(str(Path(__file__).parent.parent))
 
-# Load environment variables and enable certs
+# Load environment variables
 load_dotenv()
-from rbc_security import enable_certs
-enable_certs()
 
 from app.config import config
 from cohere_compass.clients.compass import CompassClient

@@ -2,17 +2,14 @@ import asyncio
 import logging
 import os
 from dotenv import load_dotenv
-from rbc_security import enable_certs
-import os 
 import sys
 from pathlib import Path
 
 # Add parent directory to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-# Load environment variables and certs
+# Load environment variables
 load_dotenv()
-enable_certs()
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
