@@ -42,7 +42,7 @@ class Config:
     
     # MCP Server Configuration
     MCP_SERVER_HOST = os.getenv("MCP_SERVER_HOST", "localhost")
-    MCP_SERVER_PORT = os.getenv("MCP_SERVER_PORT", "8080")
+    MCP_SERVER_PORT = int(os.getenv("MCP_SERVER_PORT", "8080"))
     MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", f"http://{MCP_SERVER_HOST}:{MCP_SERVER_PORT}")
     
     # Logging Configuration
