@@ -21,29 +21,15 @@ from app.registry.resources import registry as resource_registry
 from app.registry.prompts import registry as prompt_registry
 from app.config import config
 from app.utils.port_utils import find_available_port
+from app.utils.logging import setup_logging
 
 # Add doc_reader to path
 sys.path.append(str(Path(__file__).parent.parent))
 from app.config import config
 
-# Setup logging
-logger = logging.getLogger('mcp_server')
-logger.setLevel(getattr(logging, config.LOG_LEVEL))
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-
-handler = logging.StreamHandler()
-handler.setFormatter(formatter)
-logger.addHandler(handler)
-
-# for logs, If not running in a container
-if not config.IN_KUBERNETES and not os.getenv("LOG_TO_STDOUT_ONLY"):
-    # Ensure log directory exists
-    os.makedirs(config.LOG_DIR, exist_ok=True)
-    file_handler = logging.FileHandler(os.path.join(config.LOG_DIR, f"mcp_server_{os.getenv('POD_NAME', '')}.log"))
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
-
-logger.info('MCP server starting...')
+# Setup logging using centralized configuration
+logger = setup_logging("mcp_server")
+logger.info("MCP server starting...")
 
 # Load environment variables
 load_dotenv()

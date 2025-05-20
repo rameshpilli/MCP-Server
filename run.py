@@ -21,12 +21,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler()]
-)
-logger = logging.getLogger("mcp_launcher")
+from app.utils.logging import setup_logging
+
+logger = setup_logging("mcp_launcher")
 
 # Set working directory to project root
 project_root = Path(__file__).parent.absolute()
