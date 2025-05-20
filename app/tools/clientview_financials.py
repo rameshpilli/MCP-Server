@@ -1,4 +1,5 @@
 import logging
+import os
 import pandas as pd
 from fastmcp import Context
 from typing import Optional, Dict, Any, List, Type, ClassVar
@@ -12,6 +13,9 @@ from app.registry.tools import register_tool
 from app.utils.tool_wrappers import llm_enhance_wrapper
 
 logger = logging.getLogger('mcp_server.tools.clientview_financials')
+
+# Base URL for ClientView endpoints. Default to local mock server.
+BASE_URL = os.getenv("CLIENTVIEW_BASE_URL", "http://localhost:8001")
 
 ###################
 # Enum Definitions
@@ -318,7 +322,7 @@ class RisersDecliners(BaseFinancialModel):
     Model for retrieving top clients by revenue.
     """
     # API endpoint
-    _endpoint_url: ClassVar[str] = "https://queryservice.cfk.devfg.rbc.com/procedure/memsql__client1__getTopClients"
+    _endpoint_url: ClassVar[str] = f"{BASE_URL}/procedure/memsql__client1__getTopClients"
     
     # Display column mapping - updated to include interaction data
     _display_columns: ClassVar[Dict[str, str]] = {
@@ -355,7 +359,7 @@ class ClientValueByTimePeriod(BaseFinancialModel):
     Model for retrieving client value by time period.
     """
     # API endpoint
-    _endpoint_url: ClassVar[str] = "https://queryservice.cfk.devfg.rbc.com/procedure/memsql__client1__getRevenueTotalByTimePeriod"
+    _endpoint_url: ClassVar[str] = f"{BASE_URL}/procedure/memsql__client1__getRevenueTotalByTimePeriod"
     
     # Display column mapping - updated to include interaction data
     _display_columns: ClassVar[Dict[str, str]] = {
@@ -389,7 +393,7 @@ class ClientValueByProduct(BaseFinancialModel):
     Model for retrieving client value by product.
     """
     # API endpoint
-    _endpoint_url: ClassVar[str] = "https://queryservice.cfk.devfg.rbc.com/procedure/memsql__client1__getClientValueRevenueByProduct"
+    _endpoint_url: ClassVar[str] = f"{BASE_URL}/procedure/memsql__client1__getClientValueRevenueByProduct"
     
     # Display column mapping - updated to include interaction data
     _display_columns: ClassVar[Dict[str, str]] = {
