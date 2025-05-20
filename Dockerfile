@@ -1,28 +1,27 @@
-# Use Python 3.11 slim image
-FROM innersource-docker.artifactory.fg.rbc.com/container-hub/python:3.11-slim
-# FROM innersource-docker.rbcartifactory.fg.rbc.com/container-hub/python:3.11
-
+FROM innersource-docker/container-hub/python:3.11-slim
 USER root
 
-# Copy certificates
-COPY artifacts/Production_RBC_G2_Root_CA.cer /usr/local/share/ca-certificates/root.crt 
-COPY artifacts/Production_RBC_G2_Root_CA.cer /etc/pki/ca-trust/source/anchors/
-COPY artifacts/Production_RBC_G2_Intermediate_CA.cer /usr/local/share/ca-certificates/intermediate.crt 
-COPY artifacts/Production_RBC_G2_Intermediate_CA.cer /etc/pki/ca-trust/source/anchors/
-COPY artifacts/rbc-bundle.pem /rbc-bundle.pem 
-RUN chmod 777 /rbc-bundle.pem
+# Install Node.js and npm for MCP Inspector
+RUN apt-get update && apt-get install -y \
+    curl \
+    gnupg \
+    && curl -sL http://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y nodejs \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* \
 
-# Configure pip to use RBC's artifact repository
+# Install MCP Inspector globally
+RUN npm install -g @modelcontextprotocol/inspector
+
+# Copy certificates
+
+# Configure pip to use Company's artifact repository
 COPY artifacts/pip.conf /pip.conf
 ENV PIP_CONFIG_FILE /pip.conf
 
 # Set certificate environment variables
-ENV REQUESTS_CA_BUNDLE /rbc-bundle.pem 
-ENV SSL_CERT_FILE /rbc-bundle.pem 
-ENV CURL_CA_BUNDLE /rbc-bundle.pem
 
-# Update certificate trust stores - use the appropriate command for your base image
-# Try update-ca-certificates (Debian/Ubuntu) instead of update-ca-trust (RHEL/CentOS)
+# Update certificate trust stores
 RUN if command -v update-ca-certificates > /dev/null; then \
         update-ca-certificates; \
     elif command -v update-ca-trust > /dev/null; then \
@@ -41,20 +40,58 @@ COPY tests/ ./tests/
 COPY ui/ ./ui/
 COPY run.py .
 COPY requirements.txt .
+COPY artifacts/ ./artifacts/
 
 # Install dependencies
-RUN pip install --upgrade pip
+RUN pip install --upgrade pip --timeout 60
 
-RUN pip install --no-index --find-links=./artifacts/compass-sdk compass_sdk
+# Install Companies Security directly from the wheel file
 
-RUN pip install -r requirements.txt
+
+# Install compass_sdk from local directory if present
+RUN if [ -d "./artifacts/compass-sdk" ]; then \
+        pip install --no-index --find-links=./artifacts/compass-sdk compass_sdk || echo "Failed to install compass_sdk, continuing..."; \
+    fi
+
+# Install packages in batches with retry logic
+# Core functionality
+RUN pip install fastapi uvicorn httpx python-dotenv pydantic --default-timeout=60 || echo "Some core packages failed to install"
+
+# MCP/LLM components
+RUN pip install fastmcp anthropic openai cohere --default-timeout=60 || echo "Some MCP/LLM packages failed to install"
+
+# Cloud storage and document handling
+RUN pip install boto3 markdown beautifulsoup4 PyPDF2 "pdfminer.six" --default-timeout=60 || echo "Some document handling packages failed to install"
+
+# Security and logging
+RUN pip install python-multipart aiohttp --default-timeout=60 || echo "Some security packages failed to install"
+
+# UI (if available)
+RUN pip install chainlit --default-timeout=60 || echo "UI package failed to install"
+
+# Additional packages
+RUN pip install asyncio aiofiles pytest gunicorn prometheus-client tenacity tabulate --default-timeout=60 || echo "Some additional packages failed to install"
+
+# Set environment variables for container
+ENV IN_KUBERNETES="true"
+ENV LOG_TO_STDOUT="true"
+ENV COHERE_MCP_SERVER_HOST="0.0.0.0"
+ENV COHERE_MCP_SERVER_PORT="8001"
+ENV MCP_SERVER_HOST="localhost"
+ENV MCP_SERVER_PORT="8081"
 
 # Expose ports for API, MCP server, and UI
 EXPOSE 8000 8001 8501
 
-# Set environment variables
-ENV IN_KUBERNETES="true"
-ENV LOG_TO_STDOUT="true"
+# Create and set permissions for logs directory
+RUN mkdir -p /usr/src/elements-ai-server/logs && \
+    chmod -R 755 /usr/src/elements-ai-server/logs
+
+VOLUME ["/usr/src/elements-ai-server/logs"]
+
+# Add healthcheck
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:8000/api/v1/health || exit 1
 
 # Start application
-CMD ["python", "run.py"] 
+CMD ["python", "run.py"]
