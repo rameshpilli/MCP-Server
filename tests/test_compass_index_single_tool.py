@@ -2,16 +2,14 @@ import asyncio
 import logging
 import os
 from dotenv import load_dotenv
-from rbc_security import enable_certs
 import sys
 from pathlib import Path
 
 # Add project root to import path
 sys.path.append(str(Path(__file__).parent.parent))
 
-# Load env and enable certs
+# Load environment variables
 load_dotenv()
-enable_certs()
 
 import app.main
 

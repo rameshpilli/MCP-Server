@@ -10,14 +10,11 @@ import time
 import hashlib
 from typing import Dict, Any, List, Optional
 
-from rbc_security import enable_certs
-
 from .config import config
 from .mcp_server import mcp
 from app.utils.parameter_extractor import extract_parameters_with_llm
 
 logger = logging.getLogger("mcp_server.bridge")
-enable_certs()
 
 
 class MCPBridge:
