@@ -1,6 +1,6 @@
 """
-CLI module for the MCP Server.
-Provides the `uvx` command for running the Chainlit app with a generic MCP server.
+CLI module for the CRM MCP Server.
+Provides the `uvx` command for running the Chainlit app.
 """
 
 import os
@@ -11,11 +11,12 @@ import time
 from pathlib import Path
 from typing import Optional
 
+
 def print_server_urls(host: str, port: int, style: str = "info"):
     """Print server URLs with consistent styling"""
     api_url = f"http://{host}:{port}"
     ui_url = f"http://{host}:{port + 1}"
-    
+
     if style == "info":
         click.echo("\n" + "=" * 60)
         click.echo("📡 Server URLs:")
@@ -30,17 +31,19 @@ def print_server_urls(host: str, port: int, style: str = "info"):
         click.echo("Press Ctrl+C to stop the servers")
         click.echo("-" * 60 + "\n")
 
+
 @click.group()
 def cli():
-    """MCP Server CLI"""
+    """CRM MCP Server CLI"""
     pass
+
 
 @cli.command(name='run')
 @click.option('--host', default='localhost', help='Host to run the server on')
 @click.option('--port', default=8000, help='Port to run the server on')
 @click.option('--env', default='.env', help='Path to environment file')
 def run_server(host: str, port: int, env: str):
-    """Run the MCP Server with Chainlit UI"""
+    """Run the CRM MCP Server with Chainlit UI"""
     try:
         # Ensure we're in the project root
         project_root = Path(__file__).parent.parent
@@ -58,12 +61,13 @@ def run_server(host: str, port: int, env: str):
         # Start the FastAPI server in the background
         server_cmd = [
             "uvicorn",
-            "app.main:app",
+            # "app.main:app",
+            "app.mcp_server:app",
             "--host", host,
             "--port", str(port),
             "--reload"
         ]
-        
+
         click.echo(click.style("Starting FastAPI server...", fg='yellow'))
         server_process = subprocess.Popen(
             server_cmd,
@@ -76,11 +80,11 @@ def run_server(host: str, port: int, env: str):
         chainlit_cmd = [
             "chainlit",
             "run",
-            "ui/app.py",
+            "ui/chainlit_app.py",
             "--host", host,
             "--port", str(port + 1)
         ]
-        
+
         click.echo(click.style("Starting Chainlit UI...", fg='yellow'))
         chainlit_process = subprocess.Popen(
             chainlit_cmd,
@@ -93,11 +97,11 @@ def run_server(host: str, port: int, env: str):
         try:
             # Wait for servers to start
             time.sleep(2)
-            
+
             # Track server readiness
             api_ready = False
             chainlit_ready = False
-            
+
             while True:
                 # Check server status
                 if server_process.poll() is not None:
@@ -141,9 +145,10 @@ def run_server(host: str, port: int, env: str):
         click.echo(click.style(f"Error: {str(e)}", fg='red'), err=True)
         sys.exit(1)
 
+
 @cli.command(name='init')
 def init_project():
-    """Initialize the MCP Server project"""
+    """Initialize the CRM MCP Server project"""
     try:
         # Create necessary directories
         dirs = [
@@ -154,7 +159,7 @@ def init_project():
             "project-docs",
             "logs"
         ]
-        
+
         for dir_path in dirs:
             Path(dir_path).mkdir(parents=True, exist_ok=True)
             click.echo(click.style(f"✓ Created directory: {dir_path}", fg='green'))
@@ -162,89 +167,13 @@ def init_project():
         # Create .env file if it doesn't exist
         env_file = Path(".env")
         if not env_file.exists():
-            env_file.write_text("""# MCP Server Environment Variables
-SERVER_NAME="MCP Server"
-SERVER_DESCRIPTION="Generic MCP Server with Chainlit Integration"
+            env_file.write_text("""# CRM MCP Server Environment Variables
+SERVER_NAME="CRM MCP Server"
+SERVER_DESCRIPTION="MCP Server for CRM information and financial tools"
 API_PREFIX="/api/v1"
 CORS_ORIGINS=["http://localhost:8000", "http://localhost:8001"]
-
-# Dummy API Keys (for testing only)
-OPENAI_API_KEY="dummy-key-123"
-COHERE_API_KEY="dummy-key-456"
 """)
             click.echo(click.style("✓ Created .env file", fg='green'))
-
-        # Create a dummy tools file for testing
-        tools_file = Path("app/tools/dummy_tools.py")
-        if not tools_file.exists():
-            tools_file.write_text('''
-"""
-Dummy tools for testing the MCP server.
-"""
-from enum import Enum
-from typing import List, Optional
-from pydantic import BaseModel
-from fastmcp import Tool, ToolRegistry
-
-class DummyCategoryEnum(str, Enum):
-    """Categories for dummy data"""
-    TEST = "test"
-    DEMO = "demo"
-    SAMPLE = "sample"
-
-class DummyData(BaseModel):
-    """Model for dummy data"""
-    id: str
-    name: str
-    category: DummyCategoryEnum
-    value: float
-    tags: List[str]
-
-@ToolRegistry.register()
-class GetDummyData(Tool):
-    """Get dummy data for testing"""
-    name = "get_dummy_data"
-    description = "Retrieve dummy data for testing purposes"
-    namespace = "dummy"
-    
-    class Input(BaseModel):
-        category: Optional[DummyCategoryEnum] = None
-        limit: int = 10
-    
-    class Output(BaseModel):
-        data: List[DummyData]
-    
-    def execute(self, input: Input) -> Output:
-        # Generate dummy data
-        dummy_data = [
-            DummyData(
-                id=f"item_{i}",
-                name=f"Test Item {i}",
-                category=DummyCategoryEnum.TEST,
-                value=float(i) * 1.5,
-                tags=["test", "dummy"]
-            )
-            for i in range(input.limit)
-        ]
-        return self.Output(data=dummy_data)
-
-@ToolRegistry.register()
-class EchoTool(Tool):
-    """Echo tool for testing"""
-    name = "echo"
-    description = "Echo back the input message"
-    namespace = "dummy"
-    
-    class Input(BaseModel):
-        message: str
-    
-    class Output(BaseModel):
-        echo: str
-    
-    def execute(self, input: Input) -> Output:
-        return self.Output(echo=f"Echo: {input.message}")
-''')
-            click.echo(click.style("✓ Created dummy tools file", fg='green'))
 
         click.echo(click.style("✓ Project initialized successfully!", fg='green'))
 
@@ -252,28 +181,30 @@ class EchoTool(Tool):
         click.echo(click.style(f"Error initializing project: {str(e)}", fg='red'), err=True)
         sys.exit(1)
 
-@cli.command(name='mcp')
-def run_mcp():
-    """Run the MCP server in stdio mode for Chainlit integration"""
+
+@cli.command(name='crm-mcp')
+def crm_mcp():
+    """Run the CRM MCP server in stdio mode for Chainlit integration"""
     try:
         # Ensure we're in the project root
         project_root = Path(__file__).parent.parent
         os.chdir(project_root)
-        
+
         # Set environment variables for stdio mode
         os.environ["TRANSPORT"] = "stdio"
-        
-        click.echo(click.style("Starting MCP server in stdio mode...", fg='yellow'))
-        
+
+        click.echo(click.style("Starting CRM MCP server in stdio mode...", fg='yellow'))
+
         # Import and run the MCP server
-        from app.mcp_server import main as mcp_main
+        from app.mcp_server_old import main as mcp_main
         import asyncio
-        
+
         # Run the MCP server
         asyncio.run(mcp_main())
     except Exception as e:
-        click.echo(click.style(f"Error running MCP server: {str(e)}", fg='red'), err=True)
+        click.echo(click.style(f"Error running CRM MCP server: {str(e)}", fg='red'), err=True)
         sys.exit(1)
 
+
 if __name__ == '__main__':
-    cli() 
+    cli()
