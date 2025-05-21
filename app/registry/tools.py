@@ -4,11 +4,15 @@ Tool Registry Module
 This module provides a registry for managing and accessing tools in the MCP server.
 """
 
-from typing import Dict, Any, Callable, Optional, List
+from typing import Dict, Any, Callable, Optional, List, Coroutine
 from pydantic import BaseModel
 import importlib
 import pkgutil
 import logging
+import asyncio
+from uuid import uuid4
+
+from app.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +85,67 @@ class ToolRegistry:
 # Create global registry instance
 registry = ToolRegistry()
 
+
+def _run_async(coro: Coroutine) -> None:
+    """Helper to run a coroutine in the background if possible."""
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(coro)
+    except RuntimeError:
+        asyncio.run(coro)
+
+
+async def _index_tool(tool: "ToolDefinition") -> None:
+    """Add or update a tool document in the Compass index."""
+    if not all([config.COMPASS_API_URL, config.COMPASS_BEARER_TOKEN, config.COMPASS_INDEX_NAME]):
+        return
+
+    try:
+        from cohere_compass.clients.compass import CompassClient
+        from cohere_compass.models.documents import (
+            CompassDocument,
+            CompassDocumentMetadata,
+            CompassDocumentChunk,
+        )
+
+        client = CompassClient(
+            index_url=config.COMPASS_API_URL,
+            bearer_token=config.COMPASS_BEARER_TOKEN,
+        )
+
+        doc_id = f"tool-{tool.namespace}-{tool.name}"
+
+        doc = CompassDocument(
+            metadata=CompassDocumentMetadata(document_id=doc_id, filename=f"{tool.name}.md"),
+            content={
+                "text": f"{tool.full_name} - {tool.description}",
+                "type": "tool",
+                "name": tool.name,
+                "namespace": tool.namespace,
+                "description": tool.description,
+            },
+            chunks=[
+                CompassDocumentChunk(
+                    chunk_id=str(uuid4()),
+                    sort_id="0",
+                    document_id=doc_id,
+                    parent_document_id=doc_id,
+                    content={"text": f"{tool.full_name} - {tool.description}"},
+                )
+            ],
+        )
+
+        await asyncio.to_thread(
+            client.insert_doc,
+            index_name=config.COMPASS_INDEX_NAME,
+            doc=doc,
+        )
+
+        logger.info("Indexed tool %s in Compass", tool.full_name)
+
+    except Exception as exc:
+        logger.error("Failed to index tool %s: %s", tool.full_name, exc)
+
 def register_tool(name: str, description: str, namespace: str = "default", 
                   input_schema: Dict[str, Any] = None, output_schema: Dict[str, Any] = None,
                   metadata: Dict[str, Any] = None):
@@ -104,6 +169,10 @@ def register_tool(name: str, description: str, namespace: str = "default",
             metadata=metadata or {}
         )
         registry.register(tool)
+        try:
+            _run_async(_index_tool(tool))
+        except Exception as exc:
+            logger.error("Error indexing tool %s: %s", tool.full_name, exc)
         return func
     return decorator 
 
