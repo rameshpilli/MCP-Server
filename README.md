@@ -118,9 +118,14 @@ async def custom_search(query: str):
 
 ## Setup
 
-1. Install dependencies:
+1. Install core dependencies:
 ```bash
 pip install -r requirements.txt
+```
+
+Optional UI and vector features can be installed with:
+```bash
+pip install -r requirements-extra.txt
 ```
 
 2. Configure environment variables (create a `.env` file). You can start by copying
@@ -186,6 +191,18 @@ export CLIENTVIEW_BASE_URL="http://localhost:8001"
 
 4. Access the UI at http://localhost:8501
 5. Access the API docs at http://localhost:8000/docs
+
+### Docker Usage
+
+Build the container image:
+```bash
+docker build -t mcp-server .
+```
+
+Run the server using your `.env` file:
+```bash
+docker run --env-file .env -p 8000:8000 -p 8081:8081 -p 8501:8501 mcp-server
+```
 
 ## Adding Documents
 

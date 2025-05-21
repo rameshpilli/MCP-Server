@@ -17,11 +17,12 @@ pandas>=2.0.0
 fastmcp>=0.1.0
 openai>=1.0.0
 cohere>=4.32
-anthropic>=0.5.0
+# Pin anthropic below 1.0 for Python 3.11 compatibility
+anthropic>=0.5,<1.0.0
 
-# Optional Compass integration
+# Optional Compass integration (commented out by default)
 # cohere-compass provides document search/routing utilities
-cohere-compass>=0.1.0
+# cohere-compass>=0.1.0
 
 # ---------------------------------------------------------------------------
 # Cloud / storage utilities (optional)
