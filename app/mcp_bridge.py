@@ -37,6 +37,7 @@ from .mcp_server_old import mcp
 from app.utils.parameter_extractor import extract_parameters_with_llm, _call_llm
 from .results_coordinator import ResultsCoordinator
 from .fallback_handler import FallbackHandler
+from .schemas import PlanStep
 
 logger = logging.getLogger("mcp_server.bridge")
 enable_certs()
@@ -617,8 +618,10 @@ class MCPBridge:
             ])
             plan = json.loads(response)
             if isinstance(plan, list):
-                self._log_plan(plan)
-                return plan
+                plan = self._validate_plan(plan)
+                if plan:
+                    self._log_plan(plan)
+                    return plan
         except Exception as e:
             logger.warning(f"Plan generation failed: {e}")
         # Fallback to single step using legacy routing
@@ -647,6 +650,17 @@ class MCPBridge:
         """Yield step results one by one for streaming."""
         async for res in self.results_coordinator.process_plan_streaming(plan, self):
             yield res
+
+    def _validate_plan(self, plan: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Validate plan steps using the PlanStep schema."""
+        valid_steps = []
+        for step in plan:
+            try:
+                obj = PlanStep.model_validate(step)
+                valid_steps.append(obj.model_dump())
+            except Exception as exc:
+                logger.warning(f"Invalid plan step dropped: {exc}")
+        return valid_steps
 
     def _log_plan(self, plan: List[Dict[str, Any]]):
         """Write plan JSON to disk for debugging."""
