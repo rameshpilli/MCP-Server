@@ -327,3 +327,5 @@ Use the `MCP_SERVER_URL` environment variable to configure the default server UR
 
 For a more in-depth explanation of the codebase see
 [docs/code_walkthrough.md](docs/code_walkthrough.md).
+For example cURL usage see
+[docs/curl_examples.md](docs/curl_examples.md).
