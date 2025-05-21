@@ -1,0 +1,5 @@
+# Optional UI and vector database dependencies
+chainlit>=0.7.0
+# faiss-cpu
+# weaviate-client
+# cohere-compass>=0.1.0
