@@ -5,13 +5,9 @@ This module contains tools for summarizing documents and content.
 """
 
 import logging
-from pathlib import Path
-import sys
 from fastmcp import Context
 
-# Add root path to system path
-sys.path.append(str(Path(__file__).parent.parent.parent))
-from ui.mcp.doc_reader import doc_reader
+from app.utils.doc_reader import doc_reader
 
 # Get logger
 logger = logging.getLogger('mcp_server.tools.summarization')
