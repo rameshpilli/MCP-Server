@@ -294,3 +294,18 @@ mcp-app/
 🧠 Key Insight
 
 The MCP Server is the brain, the Bridge is the router & formatter, and FastAPI is just the door.
+## Python SDK Usage
+
+You can interact with the server from Python using the `MCPClient` class:
+```python
+from mcp_client import MCPClient
+
+client = MCPClient(base_url="http://mcp-server:8000")
+response = client.query_sync("Top clients in Canada")
+print(response)
+```
+
+Use the `MCP_SERVER_URL` environment variable to configure the default server URL. When unset, it falls back to `http://localhost:8000`.
+
+For a more in-depth explanation of the codebase see
+[docs/code_walkthrough.md](docs/code_walkthrough.md).

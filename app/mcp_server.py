@@ -133,14 +133,13 @@ async def server_info(ctx: Context) -> str:
 **Port**: {config.MCP_SERVER_PORT}
 """
 
-# Import and register clientview_financials tools
+# Auto-discover tools in app.tools package
 try:
-    import app.tools.clientview_financials
-
-    app.tools.clientview_financials.register_tools(mcp)
-    logger.info("Registered: clientview_financials")
+    from app.registry.tools import autodiscover_tools
+    autodiscover_tools(mcp)
+    logger.info("Auto-discovered tool modules")
 except Exception as e:
-    logger.error(f"Tool registration failed: {e}")
+    logger.error(f"Tool auto-discovery failed: {e}")
 
 # Add debugging tool
 @mcp.tool()

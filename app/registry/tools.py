@@ -6,6 +6,11 @@ This module provides a registry for managing and accessing tools in the MCP serv
 
 from typing import Dict, Any, Callable, Optional, List
 from pydantic import BaseModel
+import importlib
+import pkgutil
+import logging
+
+logger = logging.getLogger(__name__)
 
 class ToolDefinition(BaseModel):
     name: str
@@ -135,6 +140,29 @@ def get_tool_by_name(name: str, namespace: Optional[str] = None) -> Optional[Too
     except KeyError:
         return None
 
+
+def autodiscover_tools(mcp, package: str = "app.tools") -> None:
+    """Auto-import modules in ``package`` and register tools."""
+    try:
+        pkg = importlib.import_module(package)
+    except Exception as exc:
+        logger.warning(f"Failed to import tools package {package}: {exc}")
+        return
+
+    for _, name, ispkg in pkgutil.iter_modules(pkg.__path__):
+        if ispkg:
+            continue
+        module_name = f"{package}.{name}"
+        try:
+            mod = importlib.import_module(module_name)
+            if hasattr(mod, "register_tools"):
+                try:
+                    mod.register_tools(mcp)
+                except Exception as exc:
+                    logger.warning(f"register_tools failed for {module_name}: {exc}")
+        except Exception as exc:
+            logger.warning(f"Error importing tool module {module_name}: {exc}")
+
 # Export commonly used functions and classes
 __all__ = [
     'ToolDefinition',
@@ -142,5 +170,6 @@ __all__ = [
     'register_tool',
     'get_registered_tools',
     'get_tool_by_name',
-    'registry'
-] 
+    'registry',
+    'autodiscover_tools'
+]
