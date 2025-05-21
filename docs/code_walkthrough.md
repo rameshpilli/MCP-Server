@@ -6,7 +6,6 @@ This guide provides a human friendly overview of the repository and where to fin
 
 - `run.py` – launcher that starts the MCP server and the FastAPI API.
 - `mcp_client.py` – lightweight Python SDK for sending queries to the server.
-- `client_cli.py` – small CLI wrapper around `MCPClient`.
 - `app/` – main application code.
   - `config.py` – central configuration.
   - `main.py` – FastAPI entry point.
@@ -54,8 +53,8 @@ Key functions:
 - `register_tool` – decorator to register a tool handler.
 - `autodiscover_tools` – imports modules from `app.tools` and calls their `register_tools` function if present.
 
-### `mcp_client.py` and `client_cli.py`
-The SDK (`MCPClient`) allows other Python code to query the MCP server.  The CLI script exposes the same functionality on the command line.
+### `mcp_client.py`
+The SDK (`MCPClient`) allows other Python code to query the MCP server.  Command line access is provided via the `uvx` entry point defined in `app/cli.py`.
 
 ## LLM Wrapper Functions
 The repository has several small functions that directly interact with the LLM service:

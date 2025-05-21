@@ -173,6 +173,16 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 chainlit run ui/app.py
 ```
 
+### Option 3: Use the `uvx` CLI
+
+After installing the project with `pip install .`, you can start both servers and the Chainlit UI with a single command:
+
+```bash
+uvx run --host 0.0.0.0 --port 8000
+```
+
+The Chainlit interface will run on `port+1` (default `8001`).
+
 ### Running the Dummy Financial Server
 
 To test the financial tools without corporate services, start the mock API:

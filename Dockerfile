@@ -25,7 +25,6 @@ COPY tests/ ./tests/
 COPY ui/ ./ui/
 COPY run.py .
 COPY mcp_client.py .
-COPY client_cli.py .
 COPY pyproject.toml .
 # Install dependencies from pyproject.toml
 RUN pip install --no-cache-dir --upgrade pip && \
