@@ -123,7 +123,8 @@ async def custom_search(query: str):
 pip install -r requirements.txt
 ```
 
-2. Configure environment variables (create a `.env` file):
+2. Configure environment variables (create a `.env` file). You can start by copying
+   `.env.example` and then filling in the required values (e.g. your OpenAI API key):
 ```
 # MCP Server
 MCP_SERVER_HOST=localhost
