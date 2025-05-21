@@ -118,7 +118,7 @@ async def custom_search(query: str):
 
 ## Setup
 
-1. Install core dependencies:
+1. Install core dependencies using the provided requirements file:
 ```bash
 pip install -r requirements.txt
 ```
@@ -127,6 +127,13 @@ Optional UI and vector features can be installed with:
 ```bash
 pip install -r requirements-extra.txt
 ```
+
+If you prefer to use `pyproject.toml`, run `pip install .` instead. This
+installs the package along with the `uvx` console command defined in
+`project.scripts`.
+
+When installing from `requirements.txt` the package itself isn't installed, so a
+`uvx` wrapper script is provided in the repository root.
 
 2. Configure environment variables (create a `.env` file). You can start by copying
    `.env.example` and then filling in the required values (e.g. your OpenAI API key):
@@ -152,10 +159,14 @@ COHERE_SERVER_BEARER_TOKEN=
 
 ## Running the Application
 
-### Option 1: Start Both Servers with Single Command
+### Option 1: Start Both Servers with a Single Command
+
+Use the `uvx` CLI which mirrors the console script defined in
+`pyproject.toml`. When installing from `requirements.txt` a small wrapper is
+included in the repository:
 
 ```bash
-python run.py
+./uvx run
 ```
 
 ### Option 2: Start Each Server Separately

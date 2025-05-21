@@ -1,0 +1,6 @@
+#!/usr/bin/env python
+"""Wrapper script for app.cli when installing from requirements.txt"""
+from app.cli import cli
+
+if __name__ == "__main__":
+    cli()
