@@ -24,10 +24,12 @@ COPY docs/ ./docs/
 COPY tests/ ./tests/
 COPY ui/ ./ui/
 COPY run.py .
-COPY requirements.txt .
-# Install dependencies
+COPY mcp_client.py .
+COPY client_cli.py .
+COPY pyproject.toml .
+# Install dependencies from pyproject.toml
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir .
 
 # Set environment variables for container
 ENV IN_KUBERNETES="true"
