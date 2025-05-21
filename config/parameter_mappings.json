@@ -1,0 +1,32 @@
+{
+  "currency": {
+    "CAD": ["cad", "canadian", "canada dollar", "canadian dollar", "canada"],
+    "USD": ["usd", "us dollar", "american dollar", "us", "dollar", "dollars"]
+  },
+  "sorting": {
+    "gainers": ["gain", "gains", "gaining", "gainers", "growing", "increasing", "rising", "top gaining", "best performing", "best", "improved"],
+    "decliners": ["decline", "declining", "decliners", "decreasing", "dropping", "fallen", "worst", "worst performing", "lost", "losing"]
+  },
+  "region": {
+    "USA": ["usa", "us", "united states", "america", "american", "states", "u.s.", "u.s.a."],
+    "CAN": ["can", "canada", "canadian", "north american", "ca"],
+    "EUR": ["eur", "europe", "european", "eu", "euro", "euros"],
+    "APAC": ["apac", "asia", "pacific", "asian", "asiapac", "asia pacific", "japan", "china"],
+    "LATAM": ["latam", "latin", "latin america", "south america", "central america", "latin american"]
+  },
+  "time_period": {
+    "FY": ["fiscal", "fiscal year", "fy"],
+    "CY": ["calendar", "calendar year", "cy"]
+  },
+  "time_filter": {
+    "YR": ["year", "annual", "yearly"],
+    "QR": ["quarter", "quarterly", "q1", "q2", "q3", "q4"],
+    "MT": ["month", "monthly"],
+    "DY": ["day", "daily"]
+  },
+  "focus_list": {
+    "Focus40": ["focus40", "focus 40", "focus"],
+    "FS30": ["fs30", "fs 30", "fs"],
+    "Corp100": ["corp100", "corp 100", "corporate 100", "corp"]
+  }
+}

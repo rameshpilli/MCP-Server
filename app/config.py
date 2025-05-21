@@ -10,6 +10,11 @@ load_dotenv()
 class Config:
     # Base configuration
     BASE_DIR = Path(__file__).resolve().parent.parent
+    # Path to parameter mappings file
+    PARAMETER_MAPPINGS_PATH: str = os.getenv(
+        "PARAMETER_MAPPINGS_PATH",
+        str(BASE_DIR / "config" / "parameter_mappings.json"),
+    )
 
     # Server Configuration - Now with proper Kubernetes-friendly settings
     # We bind to 0.0.0.0 in k8s environments, but localhost for local dev
