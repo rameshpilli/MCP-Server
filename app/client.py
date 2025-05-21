@@ -1,37 +1,3 @@
-"""
-MCP Client:
-    - Acts as the interface between the user input (via UI or SDK) and the MCP Server
-    - Handles dynamic tool execution, context fetching, and output formatting
-
-1. Responsibilities:
-    - Discover MCP server's live port (for local or Kubernetes-based deployments)
-    - Use MCPBridge to route incoming user messages to relevant tools
-    - If required, augment queries with relevant context from Compass
-    - Execute tools, handle retries, collect results
-    - Optionally format/combine results via LLM to produce a final user-facing response
-
-2. LLM Integration:
-    - Uses OAuth-secured or API-key-based OpenAI-compatible LLM endpoints
-    - Sends user message + context + results to LLM for natural language response generation
-
-3. Execution Flow:
-    - UI sends a user query to MCP Client
-    - MCPClient.process_message() is called
-        - Discovers available MCP tools
-        - Gets context (from Compass) and routing (from MCPBridge)
-        - Executes each tool (with retry logic)
-        - Combines results, optionally via LLM
-        - Returns response + metadata
-
-4. Resilience:
-    - Handles retries for tool execution
-    - Uses caching to minimize redundant port discovery
-    - Graceful fallback if LLM or context tools fail
-
-Usage:
-    - This client can be used from both CLI or UI backends
-    - Particularly useful for Chainlit apps or FastAPI-based host platforms
-"""
 # app/client.py
 import os
 import httpx
@@ -146,62 +112,6 @@ class MCPClient:
         logger.warning("Could not find a running MCP server")
         return None
 
-    # async def _call_llm(self, messages: List[Dict[str, str]]) -> str:
-    #     """
-    #     Call the configured LLM using OpenAI API
-    #
-    #     Stateless method that doesn't depend on client instance state
-    #     """
-    #     logger.info("_call_llm called")
-    #     try:
-    #         # Get OAuth token first (if configured)
-    #         token = await self._get_oauth_token()
-    #         logger.info(f"Got OAuth token: {'Yes' if token else 'No'}")
-    #
-    #         # Prepare headers
-    #         headers = {
-    #             "Content-Type": "application/json"
-    #         }
-    #
-    #         # Add token if available, or use API key from environment
-    #         if token:
-    #             headers["Authorization"] = f"Bearer {token}"
-    #         elif os.getenv('OPENAI_API_KEY'):
-    #             headers["Authorization"] = f"Bearer {os.getenv('OPENAI_API_KEY')}"
-    #             logger.info("Using OPENAI_API_KEY from environment")
-    #
-    #         # Call the LLM with proper error handling and timeouts
-    #         logger.info(f"Calling LLM at {self.llm_base_url}")
-    #         async with httpx.AsyncClient(timeout=60.0) as client:
-    #             response = await client.post(
-    #                 f"{self.llm_base_url}",
-    #                 headers=headers,
-    #                 json={
-    #                     "model": self.llm_model,
-    #                     "messages": messages,
-    #                     "temperature": 0.7
-    #                 },
-    #             )
-    #             response.raise_for_status()
-    #
-    #             result = response.json()
-    #             content = result["choices"][0]["message"]["content"]
-    #             logger.info(f"LLM returned: {content[:100]}...")
-    #             return content
-    #
-    #     except httpx.ReadTimeout:
-    #         logger.error("LLM request timed out")
-    #         return "I'm sorry, but the response is taking longer than expected. Please try again with a simpler question."
-    #
-    #     except httpx.HTTPStatusError as e:
-    #         logger.error(f"HTTP error in _call_llm: {e.response.status_code} - {e.response.text}")
-    #         log_error("call_llm_http", e)
-    #         return "I'm experiencing connection issues with my knowledge service. Please try again in a moment."
-    #
-    #     except Exception as e:
-    #         logger.error(f"Error in _call_llm: {e}")
-    #         log_error("call_llm", e)
-    #         return "I understand your question, but I'm having trouble processing it right now. Please try again."
 
     async def call_llm(self, messages: List[Dict[str, str]], params: Dict[str, Any] = None) -> Union[
         Dict[str, Any], str]:
@@ -588,67 +498,6 @@ Please follow these guidelines:
             log_error("get_context", e)
             return {"results": []}
 
-    # async def _combine_results(self, results: List[Any], intent: str, original_query: str,
-    #                            context: Dict[str, Any]) -> str:
-    #     """
-    #     Combine results into a response using LLM
-    #
-    #     Stateless method suitable for horizontal scaling
-    #     """
-    #     logger.info(f"=== _combine_results START ===")
-    #     logger.info(f"Intent: {intent}")
-    #
-    #     if not results:
-    #         return "I couldn't find any relevant information for your request."
-    #
-    #     # Check what exactly is in results
-    #     for i, result in enumerate(results):
-    #         logger.info(f"Result {i}: Type={type(result)}, Content={str(result)[:100]}...")
-    #
-    #     # Prepare results text with protection against very long results
-    #     results_text = ""
-    #     for result in results:
-    #         # Limit each result to a reasonable size to avoid token limits
-    #         result_str = str(result)
-    #         if len(result_str) > 2000:
-    #             result_str = result_str[:2000] + "... (truncated for brevity)"
-    #         results_text += result_str + "\n\n"
-    #
-    #     # Create messages for LLM with clear instructions
-    #     messages = [
-    #         {
-    #             "role": "system",
-    #             "content": f"""You are a helpful AI assistant. Use the provided search results to answer the user's question.
-    #
-    #             The user asked: "{original_query}"
-    #
-    #             Here are the search results:
-    #             {results_text}
-    #
-    #             Please provide a natural, conversational answer to the user's question based on these search results.
-    #             If the search results don't contain the information needed, acknowledge this rather than making up information."""
-    #         },
-    #         {
-    #             "role": "user",
-    #             "content": original_query
-    #         }
-    #     ]
-    #
-    #
-    #     # Call LLM with retry logic
-    #     for attempt in range(3):
-    #         try:
-    #             # llm_response = await self._call_llm(messages)
-    #             llm_response = await self.call_llm(messages)
-    #             logger.info(f"LLM response received: {llm_response[:100]}...")
-    #             return llm_response
-    #
-    #         except Exception as e:
-    #             logger.error(f"LLM call failed (attempt {attempt + 1}): {e}", exc_info=True)
-    #             if attempt == 2:  # Last attempt
-    #                 # Fallback to basic response
-    #                 return f"Based on your {intent} request, I found some information but had trouble processing it. Here's what I found:\n\n{results_text[:500]}..."
-    #             await asyncio.sleep(0.5 * (attempt + 1))  # Exponential backoff
 
     async def _combine_results(self, results: List[Any], intent: str, original_query: str,
                                context: Dict[str, Any]) -> str:
