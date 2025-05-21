@@ -30,10 +30,13 @@ from typing import Dict, Any, List, Optional
 import time
 import hashlib
 import datetime
+import json
 from rbc_security import enable_certs
 from .config import config
 from .mcp_server_old import mcp
-from app.utils.parameter_extractor import extract_parameters_with_llm
+from app.utils.parameter_extractor import extract_parameters_with_llm, _call_llm
+from .results_coordinator import ResultsCoordinator
+from .fallback_handler import FallbackHandler
 
 logger = logging.getLogger("mcp_server.bridge")
 enable_certs()
@@ -46,6 +49,17 @@ class MCPBridge:
         self.compass_index = getattr(config, 'COMPASS_INDEX_NAME', None)
         self.mcp = mcp
         self.compass_client = None
+
+        self.results_coordinator = ResultsCoordinator(
+            sqlite_cache=None if not config.USE_SQLITE_CACHE else None,
+            vector_cache=None if not config.USE_VECTOR_DB else None,
+        )
+        self.fallback_handler = FallbackHandler(
+            sqlite_cache=self.results_coordinator.sqlite_cache,
+            vector_db=self.results_coordinator.vector_cache,
+            use_sqlite=config.USE_SQLITE_CACHE,
+            use_vector=config.USE_VECTOR_DB,
+        )
 
         # Simple parameter extraction cache
         self._param_cache = {}
@@ -588,3 +602,58 @@ class MCPBridge:
                 break
 
         return top_tools
+
+    async def plan_tool_chain(self, query: str, context: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """Generate a tool execution plan using the LLM."""
+        planning_prompt = (
+            f"Given this query: \"{query}\"\n"
+            "Return a JSON array of tool calls needed to satisfy it."
+        )
+
+        try:
+            response = await _call_llm([
+                {"role": "system", "content": "You are a planning assistant."},
+                {"role": "user", "content": planning_prompt},
+            ])
+            plan = json.loads(response)
+            if isinstance(plan, list):
+                self._log_plan(plan)
+                return plan
+        except Exception as e:
+            logger.warning(f"Plan generation failed: {e}")
+        # Fallback to single step using legacy routing
+        route = await self.route_request(query, context or {})
+        step = {"tool": route["endpoints"][0]["name"], "parameters": route["endpoints"][0].get("params", {})}
+        plan = [step]
+        self._log_plan(plan)
+        return plan
+
+    async def execute_tool(self, tool_name: str, params: Dict[str, Any]):
+        """Execute a tool registered with the MCP server."""
+        tools = await self.mcp.get_tools()
+        tool = tools.get(tool_name)
+        if not tool:
+            return None
+        ctx = type("Tmp", (), {"request_context": type("TmpCtx", (), {"context": {}})()})()
+        if params:
+            return await tool.fn(ctx, **params)
+        return await tool.fn(ctx)
+
+    async def run_plan(self, plan: List[Dict[str, Any]]):
+        """Execute a previously generated plan."""
+        return await self.results_coordinator.process_plan(plan, self)
+
+    async def run_plan_streaming(self, plan: List[Dict[str, Any]]):
+        """Yield step results one by one for streaming."""
+        async for res in self.results_coordinator.process_plan_streaming(plan, self):
+            yield res
+
+    def _log_plan(self, plan: List[Dict[str, Any]]):
+        """Write plan JSON to disk for debugging."""
+        try:
+            output_path = config.PLAN_LOG_FILE
+            with open(output_path, "w") as f:
+                json.dump(plan, f, indent=2)
+            logger.debug(f"Saved plan to {output_path}")
+        except Exception as exc:
+            logger.warning(f"Failed to log plan: {exc}")

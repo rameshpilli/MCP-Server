@@ -83,6 +83,11 @@ class Config:
     S3_USER: str = os.getenv("RBC_S3_USER")
     S3_PASS: str = os.getenv("RBC_S3_PASS")
     S3_VERIFY_SSL: bool = os.getenv("RBC_S3_VERIFY_SSL", "false").lower() == "true"
+
+    # Optional caching and vector usage
+    USE_SQLITE_CACHE: bool = os.getenv("USE_SQLITE_CACHE", "true").lower() == "true"
+    USE_VECTOR_DB: bool = os.getenv("USE_VECTOR_DB", "false").lower() == "true"
+    PLAN_LOG_FILE: str = os.getenv("PLAN_LOG_FILE", str(BASE_DIR / "output" / "plan_debug.json"))
     
     # Kubernetes specific configuration
     IN_KUBERNETES: bool = os.getenv("KUBERNETES_SERVICE_HOST") is not None
