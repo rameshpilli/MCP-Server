@@ -118,15 +118,13 @@ async def custom_search(query: str):
 
 ## Setup
 
-1. Install core dependencies:
+1. Install dependencies from `pyproject.toml`:
 ```bash
-pip install -r requirements.txt
+pip install .
 ```
-
-Optional UI and vector features can be installed with:
-```bash
-pip install -r requirements-extra.txt
-```
+This project uses `pyproject.toml` as the single source of truth for
+dependencies. The provided Dockerfile and Kubernetes manifests install
+packages the same way using `pip install .`.
 
 2. Configure environment variables (create a `.env` file). You can start by copying
    `.env.example` and then filling in the required values (e.g. your OpenAI API key):
@@ -199,6 +197,9 @@ Build the container image:
 docker build -t mcp-server .
 ```
 
+The Dockerfile installs all dependencies using `pip install .`, so the
+`pyproject.toml` is the single source of package versions.
+
 Run the server using your `.env` file:
 ```bash
 docker run --env-file .env -p 8000:8000 -p 8081:8081 -p 8501:8501 mcp-server
@@ -249,7 +250,7 @@ mcp-app/
 │   └── app.py                 # A friendly chat interface for users to interact with the system.
 ├── .env                       # Configuration secrets and API keys (keep this safe!).
 ├── Dockerfile                 # Instructions for packaging the app into a container.
-├── requirements.txt           # List of Python packages needed to run the app.
+├── pyproject.toml             # Project metadata and dependencies.
 └── kubernetes/
     ├── deployment.yaml        # Tells Kubernetes how to run multiple copies of the app.
     ├── service.yaml           # Sets up networking so other services can talk to the app.
