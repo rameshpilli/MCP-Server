@@ -195,12 +195,13 @@ def crm_mcp():
 
         click.echo(click.style("Starting CRM MCP server in stdio mode...", fg='yellow'))
 
-        # Import and run the MCP server
-        from app.mcp_server_old import main as mcp_main
+        # Import MCP server components
+        from app.mcp_server import mcp, process_message
+        from app.stdio_handler import run_stdio_mode
         import asyncio
 
-        # Run the MCP server
-        asyncio.run(mcp_main())
+        # Run the MCP server in STDIO mode
+        asyncio.run(run_stdio_mode(mcp, process_message))
     except Exception as e:
         click.echo(click.style(f"Error running CRM MCP server: {str(e)}", fg='red'), err=True)
         sys.exit(1)

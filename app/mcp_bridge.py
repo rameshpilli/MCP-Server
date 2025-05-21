@@ -33,7 +33,7 @@ import datetime
 import json
 from rbc_security import enable_certs
 from .config import config
-from .mcp_server_old import mcp
+from app.mcp_server import mcp
 from app.utils.parameter_extractor import extract_parameters_with_llm, _call_llm
 from .results_coordinator import ResultsCoordinator
 from .fallback_handler import FallbackHandler
