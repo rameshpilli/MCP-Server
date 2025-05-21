@@ -45,6 +45,7 @@ from .config import config
 from .utils.logger import log_interaction, log_error
 from .mcp_bridge import MCPBridge
 from fastmcp import Context
+from app.mcp_server import mcp
 import logging
 logger = logging.getLogger(__name__)
 
@@ -359,8 +360,6 @@ class MCPClient:
                     for attempt in range(3):  # Up to 3 attempts
                         try:
                             # Execute tool through the MCP server
-                            from app.mcp_server import mcp
-
                             # Create a mock context for the tool
                             from .registry import tool_registry, resource_registry, prompt_registry
 
