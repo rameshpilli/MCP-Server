@@ -359,7 +359,7 @@ class MCPClient:
                     for attempt in range(3):  # Up to 3 attempts
                         try:
                             # Execute tool through the MCP server
-                            from .mcp_server_old import mcp
+                            from app.mcp_server import mcp
 
                             # Create a mock context for the tool
                             from .registry import tool_registry, resource_registry, prompt_registry
