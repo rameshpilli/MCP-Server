@@ -79,27 +79,50 @@ async def extract_parameters_with_llm(query: str, tool_name: str, schema: Dict[s
     # Normalize values using mappings
     normalized = {}
     for key, val in params.items():
-        if key not in schema:
+        if key not in schema or val is None:
             continue
-        if val is None:
-            continue
-        if key in ["currency", "ccy_code", "sorting", "sorting_criteria", "region", "focus_list", "time_period", "time_filter"]:
-            base_key = key
-            if key == "ccy_code":
-                base_key = "currency"
-            if key == "sorting_criteria":
-                base_key = "sorting"
-            mapping = PARAM_MAPPINGS.get(base_key, {})
-            val_upper = str(val).upper()
-            val_lower = str(val).lower()
-            matched = False
+
+        if key in ["currency", "ccy_code"]:
+            val_str = str(val).upper()
+            mapping = PARAM_MAPPINGS.get("currency", {})
             for std, terms in mapping.items():
-                if val_upper == std or val_lower in [t.lower() for t in terms]:
+                if val_str == std or val_str in [t.upper() for t in terms]:
                     normalized[key] = std
-                    matched = True
                     break
-            if not matched:
-                normalized[key] = val
+            else:
+                normalized[key] = "USD"
+
+        elif key in ["sorting", "sorting_criteria"]:
+            val_str = str(val).lower()
+            mapping = PARAM_MAPPINGS.get("sorting", {})
+            for std, terms in mapping.items():
+                if val_str == std or val_str in [t.lower() for t in terms]:
+                    normalized[key] = std
+                    break
+            else:
+                normalized[key] = "top"
+
+        elif key == "region":
+            val_str = str(val).upper()
+            mapping = PARAM_MAPPINGS.get("region", {})
+            for std, terms in mapping.items():
+                if val_str == std or val_str in [t.upper() for t in terms]:
+                    normalized[key] = std
+                    break
+
+        elif key in ["time_period_year"]:
+            from datetime import datetime
+            try:
+                year = int(val)
+                current_year = datetime.now().year
+                if current_year - 3 <= year <= current_year + 1:
+                    normalized[key] = year
+                else:
+                    normalized[key] = current_year
+            except (ValueError, TypeError):
+                normalized[key] = datetime.now().year
+
         else:
             normalized[key] = val
+
     return normalized

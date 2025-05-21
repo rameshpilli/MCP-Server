@@ -406,12 +406,10 @@ class MCPBridge:
     async def _get_tool_params(self, tool_name: str, query: str) -> Dict[str, Any]:
         """
         Extract parameters from the user's query for a specific tool.
-        Uses LLM with fallback to rule-based extraction.
-        Designed to be flexible and extensible.
+        Parameters are pulled using the LLM. Returns an empty dict if no
+        parameters can be determined.
         """
         from app.registry import tool_registry
-        import re
-        query_lower = query.lower()
 
         # Log the start of parameter extraction
         logger.info(f"Starting parameter extraction for tool '{tool_name}'")
@@ -435,48 +433,19 @@ class MCPBridge:
         input_schema = getattr(tool, 'input_schema', {})
         logger.info(f"Tool input schema has {len(input_schema)} parameters")
 
-        # Step 3: Try LLM-based extraction first
+        # Step 3: Try LLM-based extraction
         try:
             llm_params = await extract_parameters_with_llm(query, tool_name, input_schema)
             if llm_params:
                 logger.info(f"LLM extracted parameters: {llm_params}")
-
-                # Normalize the parameters based on schema
-                normalized_params = self._normalize_parameters(llm_params, input_schema)
-                logger.info(f"Normalized parameters: {normalized_params}")
-
                 # Save to cache and return
-                self._update_param_cache(cache_key, normalized_params)
-                return normalized_params
+                self._update_param_cache(cache_key, llm_params)
+                return llm_params
         except Exception as e:
             logger.warning(f"LLM parameter extraction failed: {e}")
 
-        # Step 4: Fall back to rule-based extraction
-        logger.info("Falling back to rule-based parameter extraction")
-
-        # Get parameter term mappings from a centralized configuration
-        param_mappings = self._get_parameter_mappings()
-
-        extracted_params = {}
-
-        # Process each parameter in the schema
-        for param_name in input_schema.keys():
-            # Special handling based on parameter type
-            param_value = self._extract_parameter_value(param_name, query_lower, param_mappings)
-            if param_value is not None:
-                extracted_params[param_name] = param_value
-
-        # Normalize and validate extracted parameters
-        normalized_params = self._normalize_parameters(extracted_params, input_schema)
-
-        # Save to cache if we have any parameters
-        if normalized_params:
-            self._update_param_cache(cache_key, normalized_params)
-            logger.info(f"Rule-based extracted parameters: {normalized_params}")
-        else:
-            logger.info("No parameters extracted")
-
-        return normalized_params
+        logger.info("No parameters extracted")
+        return {}
 
     def _get_cache_key(self, tool_name: str, query: str) -> str:
         """Generate a cache key for parameter extraction"""
