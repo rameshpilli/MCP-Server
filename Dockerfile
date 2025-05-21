@@ -43,34 +43,11 @@ COPY requirements.txt .
 COPY artifacts/ ./artifacts/
 
 # Install dependencies
-RUN pip install --upgrade pip --timeout 60
-
-# Install Companies Security directly from the wheel file
-
-
-# Install compass_sdk from local directory if present
-RUN if [ -d "./artifacts/compass-sdk" ]; then \
-        pip install --no-index --find-links=./artifacts/compass-sdk compass_sdk || echo "Failed to install compass_sdk, continuing..."; \
-    fi
-
-# Install packages in batches with retry logic
-# Core functionality
-RUN pip install fastapi uvicorn httpx python-dotenv pydantic --default-timeout=60 || echo "Some core packages failed to install"
-
-# MCP/LLM components
-RUN pip install fastmcp anthropic openai cohere --default-timeout=60 || echo "Some MCP/LLM packages failed to install"
-
-# Cloud storage and document handling
-RUN pip install boto3 markdown beautifulsoup4 PyPDF2 "pdfminer.six" --default-timeout=60 || echo "Some document handling packages failed to install"
-
-# Security and logging
-RUN pip install python-multipart aiohttp --default-timeout=60 || echo "Some security packages failed to install"
-
-# UI (if available)
-RUN pip install chainlit --default-timeout=60 || echo "UI package failed to install"
-
-# Additional packages
-RUN pip install asyncio aiofiles pytest gunicorn prometheus-client tenacity tabulate --default-timeout=60 || echo "Some additional packages failed to install"
+RUN pip install --upgrade pip && \
+    if [ -d "./artifacts/compass-sdk" ]; then \
+        pip install --no-index --find-links=./artifacts/compass-sdk compass_sdk; \
+    fi && \
+    pip install --no-index --find-links=./artifacts/compass-sdk -r requirements.txt
 
 # Set environment variables for container
 ENV IN_KUBERNETES="true"
