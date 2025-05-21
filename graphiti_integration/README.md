@@ -3,7 +3,8 @@
 This folder contains a lightweight integration between the MCP server and the
 [Graphiti](https://github.com/getzep/graphiti) project. The goal is to ingest
 CRM client data into a local Graphiti instance and query it using natural
-language.
+language.  A `requirements.txt` file is provided for installing the minimal
+dependencies needed to run the example Graphiti backed server.
 
 ## Files
 
@@ -18,7 +19,16 @@ language.
 
 ## Usage
 
-1. **Ingest Data**
+1. **Install Dependencies**
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+   This installs the packages required for the example MCP server that talks to
+   a running Graphiti instance.
+
+2. **Ingest Data**
 
    ```bash
    python -m graphiti_integration.ingest_clients
@@ -27,7 +37,7 @@ language.
    This calls the `get_top_clients` tool and posts the resulting records to the
    configured Graphiti server.
 
-2. **Run the MCP Server**
+3. **Run the MCP Server**
 
    ```bash
    uvicorn mcp_server_graphiti:app --host 0.0.0.0 --port 8080
