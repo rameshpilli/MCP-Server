@@ -5,13 +5,9 @@ This module contains tools for interacting with documents.
 """
 
 import logging
-from pathlib import Path
-import sys
 from typing import Dict, Any, Optional
 
-# Add root path to system path
-sys.path.append(str(Path(__file__).parent.parent.parent))
-from ui.mcp.doc_reader import doc_reader
+from app.utils.doc_reader import doc_reader
 from app.registry.tools import register_tool
 
 # Get logger
