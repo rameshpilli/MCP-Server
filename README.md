@@ -46,7 +46,7 @@ The system follows a layered architecture:
    - Web interface for user interaction
    - Sends messages to the MCP client
 
-2. **MCP Client (ui/mcp/client.py)**
+2. **MCP Client (mcp_client.py)**
    - Processes user messages
    - Sends requests to the MCP server
    - Handles context retrieval from Cohere
@@ -76,9 +76,24 @@ The system follows a layered architecture:
 6. Response is returned through the chain
 7. Response is displayed in Chainlit UI
 
+Example tool chaining:
+
+```
+User Input
+   |
+   v
+MCP Server
+   |
+   v
+[Tool A] -> [Tool B] -> [Tool C]
+   |
+   v
+Response
+```
+
 ## Agent Registration
 
-The system supports registration of external agents, each with their own tools,  resources, and prompts.
+The system supports registration of external agents, each with their own tools,  resources, and prompts. See [docs/README.md](docs/README.md) for additional documentation.
 
 ### How to Register an Agent
 
