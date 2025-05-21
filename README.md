@@ -169,6 +169,20 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 chainlit run ui/app.py
 ```
 
+### Running the Dummy Financial Server
+
+To test the financial tools without corporate services, start the mock API:
+
+```bash
+uvicorn examples.dummy_financial_server:app --host 0.0.0.0 --port 8001
+```
+
+Set `CLIENTVIEW_BASE_URL` to point the tools to this server:
+
+```bash
+export CLIENTVIEW_BASE_URL="http://localhost:8001"
+```
+
 4. Access the UI at http://localhost:8501
 5. Access the API docs at http://localhost:8000/docs
 

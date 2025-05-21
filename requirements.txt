@@ -4,6 +4,7 @@ uvicorn>=0.23.2
 httpx>=0.25.0
 python-dotenv>=1.0.0
 pydantic>=2.4.2
+pandas>=2.0.0
 
 # MCP/LLM components
 fastmcp>=0.1.0
@@ -35,6 +36,4 @@ tenacity>=8.2.3
 tabulate>=0.9.0
 
 # Compass integration
-# compass-sdk is installed from local wheel
-# compass-sdk @ git+https://github.com/cohere-ai/cohere-compass-sdk.git
-pip install --no-index --find-links=./artifacts/compass-sdk compass_sdk
+# The compass_sdk wheel can be installed from ./artifacts/compass-sdk
