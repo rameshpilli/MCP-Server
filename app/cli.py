@@ -80,7 +80,7 @@ def run_server(host: str, port: int, env: str):
         chainlit_cmd = [
             "chainlit",
             "run",
-            "ui/chainlit_app.py",
+            "ui/app.py",
             "--host", host,
             "--port", str(port + 1)
         ]
@@ -195,9 +195,8 @@ def crm_mcp():
 
         click.echo(click.style("Starting CRM MCP server in stdio mode...", fg='yellow'))
 
-        # Import MCP server components
-        from app.mcp_server import mcp, process_message
-        from app.stdio_handler import run_stdio_mode
+        # Import MCP server components and stdio runner
+        from app.mcp_server import mcp, process_message, run_stdio_mode
         import asyncio
 
         # Run the MCP server in STDIO mode
