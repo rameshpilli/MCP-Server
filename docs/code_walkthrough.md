@@ -66,11 +66,32 @@ The repository has several small functions that directly interact with the LLM s
 
 These wrappers all construct an HTTP request to the LLM endpoint, set authentication headers (OAuth token or API key), and return the parsed JSON result.
 
-## Step‑by‑Step Example
-1. A user query arrives at `app/main.py` through `/api/v1/chat`.
-2. `main.py` calls `mcp_bridge.MCPBridge.route_request` to find the right tool.
-3. `MCPBridge` may call `plan_tool_chain` to let the LLM decide a multi tool plan.
-4. Each planned step is validated by `_validate_plan` and executed via `run_plan`.
-5. Individual tools are registered through decorators in `app/tools/*` and executed by `app/mcp_server.py`.
-6. Results flow back up to the API response or the Chainlit UI.
+## Query Lifecycle Graph
+
+The diagram below shows how a request moves through the main modules when hitting
+the `/api/v1/chat` endpoint.  Arrows represent function calls and data flow.
+
+```text
+main.py (/api/v1/chat)
+  └── MCPClient.process_message (app/client.py)
+        ├── _get_context → call_llm (LLM for context search)
+        └── MCPBridge.route_request (app/mcp_bridge.py)
+              ├── plan_tool_chain → run_plan
+              │       └── ResultsCoordinator.process_plan
+              │             └── MCPBridge.execute_tool
+              │                   └── mcp_server.process_message
+              │                         └── execute_tool
+              │                               └── registry.autodiscover_tools → tool_function
+              └── _get_tool_params → extract_parameters_with_llm (LLM)
+        └── _combine_results → call_llm (formats final answer)
+  Response returned by FastAPI → client/Chainlit
+```
+
+- Tools are dynamically registered at startup via
+  `autodiscover_tools` in `app.registry.tools`.
+- Parameter extraction and tool planning both leverage the LLM
+  through `call_llm` and `extract_parameters_with_llm`.
+- `MCPClient.process_message` collects tool outputs, optionally
+  formats them with the LLM, then returns the response to the
+  FastAPI handler which streams it back to the user.
 
