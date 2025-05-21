@@ -249,7 +249,7 @@ mcp-app/
 6. ⏳ Sample Tools Implementation
 7. ⏳ Session Memory
 8. ⏳ Testing Setup
-9. ⏳ Docker Configuration
+9. ⏳ Docker Configuration - see [docs/docker_usage.md](docs/docker_usage.md)
 10. ⏳ Kubernetes Deployment
 
 ## API Endpoints
