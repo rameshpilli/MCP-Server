@@ -94,8 +94,7 @@ try:
     from app.mcp_bridge import MCPBridge
 
     # Create a bridge instance
-    bridge = MCPBridge()
-    bridge.mcp = mcp
+    bridge = MCPBridge(mcp)
     logger.info("MCP-Bridge initialized Successfully")
 except Exception as e:
     logger.error(f"MCP-Bridge initialization failed: {e}")
