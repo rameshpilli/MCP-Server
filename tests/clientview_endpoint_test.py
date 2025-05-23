@@ -27,7 +27,7 @@ def main():
     logger.info("status: %s", result.get("status"))
     for i, row in enumerate(result.get("data", [])[:3]):
         logger.info("row %d: %s", i + 1, row)
-    df = rd.display()
+    df = rd.display(max_rows=10)
     logger.info("\nDataFrame:\n%s", df.head().to_string(index=False))
 
     # ClientValueByProduct demo
@@ -37,7 +37,7 @@ def main():
     logger.info("status: %s", result.get("status"))
     for i, row in enumerate(result.get("data", [])[:3]):
         logger.info("row %d: %s", i + 1, row)
-    df = cvbp.display()
+    df = cvbp.display(max_rows=10)
     logger.info("\nDataFrame:\n%s", df.head().to_string(index=False))
 
     # ClientValueByTimePeriod demo
@@ -47,7 +47,7 @@ def main():
     logger.info("status: %s", result.get("status"))
     for i, row in enumerate(result.get("data", [])[:3]):
         logger.info("row %d: %s", i + 1, row)
-    df = cvbt.display()
+    df = cvbt.display(max_rows=10)
     logger.info("\nDataFrame:\n%s", df.head().to_string(index=False))
 
 
