@@ -50,7 +50,7 @@ async def test_risers_decliners():
             
             # Now try with pandas display method
             logger.info("\nUsing pandas display method:")
-            df = rd.display()
+            df = rd.display(max_rows=10)
             logger.info(f"DataFrame has {len(df)} rows and {len(df.columns)} columns")
             logger.info(f"Column names: {df.columns.tolist()}")
         else:
@@ -87,7 +87,7 @@ async def test_client_value_by_product():
             
             # Now try with pandas display method
             logger.info("\nUsing pandas display method:")
-            df = cvbp.display()
+            df = cvbp.display(max_rows=10)
             logger.info(f"DataFrame has {len(df)} rows and {len(df.columns)} columns")
             logger.info(f"Column names: {df.columns.tolist()}")
         else:
@@ -141,7 +141,7 @@ async def test_client_value_by_time():
             # Now wrap in a try block the display method call
             try:
                 logger.info("\nAttempting to use display method:")
-                df = cvbt.display()
+                df = cvbt.display(max_rows=10)
                 logger.info(f"DataFrame has {len(df)} rows and {len(df.columns)} columns")
                 logger.info(f"Column names: {df.columns.tolist()}")
             except Exception as display_error:
@@ -214,7 +214,7 @@ async def test_interaction_data():
                 
                 # Test the display method with interaction data
                 logger.info("\nTesting display method with interaction data:")
-                df = rd.display()
+                df = rd.display(max_rows=10)
                 
                 # Verify interaction columns are present
                 interaction_columns = [
@@ -244,6 +244,20 @@ async def test_interaction_data():
     except Exception as e:
         logger.error(f"Error testing interaction data: {e}")
 
+async def test_display_unlimited_results():
+    """Ensure display returns all rows when no max_rows is specified."""
+    rd = RisersDecliners(
+        ccy_code=CCYEnum.usd,
+        sorting_criteria=RDSortingCriteriaEnum.top
+    )
+
+    result = rd.execute()
+    if result.get("status") == "success":
+        df = rd.display()
+        assert len(df) == len(result.get("data", []))
+    else:
+        logger.error(f"API call failed: {result}")
+
 async def run_all_tests():
     """Run all tests"""
     logger.info("Starting ClientView financials API tests...")
@@ -252,6 +266,7 @@ async def run_all_tests():
     await test_client_value_by_product()
     await test_client_value_by_time()
     await test_interaction_data()  # Add the new interaction data test
+    await test_display_unlimited_results()
     
     logger.info("All tests completed")
 

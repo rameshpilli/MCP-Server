@@ -192,26 +192,37 @@ class BaseFinancialModel(BaseModel):
             }
             return self._service_response
     
-    def display(self) -> pd.DataFrame:
+    def display(self, max_rows: Optional[int] = None) -> pd.DataFrame:
         """
         Display the API results as a pandas DataFrame.
         Uses the column mapping defined in the derived class.
-        
+
+        Args:
+            max_rows: Optional limit for the number of rows to display. ``None``
+                shows all available rows.
+
         Returns:
             pandas DataFrame with formatted data
         """
         if not self._display_columns:
             raise ValueError("No display columns defined for this model")
-            
-        return self._create_display_dataframe(self._display_columns)
+
+        return self._create_display_dataframe(self._display_columns, max_rows=max_rows)
     
-    def _create_display_dataframe(self, columns_config: Dict[str, str]) -> pd.DataFrame:
+    def _create_display_dataframe(
+        self,
+        columns_config: Dict[str, str],
+        *,
+        max_rows: Optional[int] = None,
+    ) -> pd.DataFrame:
         """
         Create a display DataFrame from API response data.
         Handles different response structures (dict or list).
         
         Args:
             columns_config: Mapping of output column names to API response field names
+            max_rows: Optional limit for the number of rows in the returned DataFrame.
+                ``None`` means all rows will be included.
             
         Returns:
             pandas DataFrame with the specified columns
@@ -232,10 +243,10 @@ class BaseFinancialModel(BaseModel):
         # Handle dictionary response (aggregated data)
         if isinstance(data, dict):
             return self._process_dict_response(data, columns_config)
-        
+
         # Handle list response (detailed data)
         if isinstance(data, list):
-            return self._process_list_response(data, columns_config)
+            return self._process_list_response(data, columns_config, max_rows=max_rows)
         
         # Log unexpected data structure
         logger.warning(f"Unexpected data structure: {type(data)}")
@@ -269,13 +280,27 @@ class BaseFinancialModel(BaseModel):
                 
         return pd.DataFrame([row_data])
     
-    def _process_list_response(self, data: List[Dict[str, Any]], columns_config: Dict[str, str]) -> pd.DataFrame:
-        """Process list response into a DataFrame with enhanced interaction data handling"""
+    def _process_list_response(
+        self,
+        data: List[Dict[str, Any]],
+        columns_config: Dict[str, str],
+        *,
+        max_rows: Optional[int] = None,
+    ) -> pd.DataFrame:
+        """Process list response into a DataFrame with enhanced interaction data handling.
+
+        Args:
+            data: List of response dictionaries.
+            columns_config: Mapping of output column names to response fields.
+            max_rows: Optional limit of rows to process. ``None`` processes all rows.
+        """
         if not data:  # Empty list
             return pd.DataFrame({col: [] for col in columns_config.keys()})
-            
-        # Get max rows to display (up to 10)
-        max_rows = min(10, len(data))
+
+        if max_rows is None:
+            max_rows = len(data)
+        else:
+            max_rows = min(max_rows, len(data))
         
         # Prepare data for DataFrame
         table = {col: [] for col in columns_config.keys()}
