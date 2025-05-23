@@ -91,7 +91,7 @@ graph LR
 - **Example Tool**:
   ```python
   @register_tool(namespace="crm")
-  async def get_top_clients(ctx: Context, **kwargs):
+  async def get_top_clients(ctx: Context, sorting: str = "top", currency: str = "USD", region: str | None = None, focus_list: str | None = None):
       # 1. Executes business logic
       # 2. Returns formatted results
   ```

@@ -503,11 +503,13 @@ def register_tools(mcp):
         system_prompt="You are an expert CRM analyst specializing in client revenue analysis and relationship management."
     )
     @mcp.tool()
-    async def get_top_clients(ctx: Context, **kwargs) -> str:
-        currency = kwargs.get("currency", "USD")
-        sorting = kwargs.get("sorting", "top")
-        region = kwargs.get("region")
-        focus_list = kwargs.get("focus_list")
+    async def get_top_clients(
+        ctx: Context,
+        sorting: str = "top",
+        currency: str = "USD",
+        region: str | None = None,
+        focus_list: str | None = None,
+    ) -> str:
         """
         Get top clients by revenue.
         
