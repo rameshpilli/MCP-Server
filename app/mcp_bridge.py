@@ -33,7 +33,6 @@ import datetime
 import json
 from rbc_security import enable_certs
 from .config import config
-from app.mcp_server import mcp
 from app.utils.parameter_extractor import extract_parameters_with_llm, _call_llm
 from .results_coordinator import ResultsCoordinator
 from .fallback_handler import FallbackHandler
@@ -44,11 +43,28 @@ enable_certs()
 
 
 class MCPBridge:
-    def __init__(self):
+    def __init__(self, mcp_instance=None):
+        """Create a bridge for routing and executing tools.
+
+        Parameters
+        ----------
+        mcp_instance : Optional[FastMCP]
+            Existing FastMCP instance. If not provided, the bridge will attempt
+            to import ``mcp`` from :mod:`app.mcp_server` lazily to avoid
+            circular imports.
+        """
+
         self.compass_api_url = getattr(config, 'COMPASS_API_URL', None)
         self.compass_bearer_token = getattr(config, 'COMPASS_BEARER_TOKEN', None)
         self.compass_index = getattr(config, 'COMPASS_INDEX_NAME', None)
-        self.mcp = mcp
+        if mcp_instance is not None:
+            self.mcp = mcp_instance
+        else:
+            try:
+                from app.mcp_server import mcp as server_mcp
+                self.mcp = server_mcp
+            except Exception:
+                self.mcp = None
         self.compass_client = None
 
         self.results_coordinator = ResultsCoordinator(
