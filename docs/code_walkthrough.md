@@ -43,7 +43,7 @@ Key function:
 Extracts tool parameters from natural language queries.
 
 Key functions:
-- `_call_llm` – minimal LLM wrapper used only for parameter extraction.
+- `_call_llm` – minimal LLM wrapper used for parameter extraction and planning.
 - `extract_parameters_with_llm` – high level routine that formats the prompt and normalises the output.
 
 ### `app/registry/tools.py`
@@ -59,7 +59,7 @@ The SDK (`MCPClient`) allows other Python code to query the MCP server.  Command
 ## LLM Wrapper Functions
 The repository has several small functions that directly interact with the LLM service:
 
-1. `app/utils/parameter_extractor.py:_call_llm` – used when extracting parameters for a tool.
+1. `app/utils/parameter_extractor.py:_call_llm` – shared helper used by planning and parameter extraction.
 2. `app/client.py:call_llm` – the main wrapper for MCP server interactions.
 3. `ui/app.py:call_llm` – similar wrapper used by the Chainlit UI.
 

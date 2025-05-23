@@ -33,7 +33,13 @@ import datetime
 import json
 from rbc_security import enable_certs
 from .config import config
-from app.utils.parameter_extractor import extract_parameters_with_llm, _call_llm
+from app.utils.parameter_extractor import (
+    extract_parameters_with_llm,
+    _call_llm as _llm_call,
+)
+
+# Backwards compatibility for external callers
+_call_llm = _llm_call
 from .results_coordinator import ResultsCoordinator
 from .fallback_handler import FallbackHandler
 from .schemas import PlanStep
@@ -97,6 +103,10 @@ class MCPBridge:
 
     async def get_available_tools(self):
         return await self.mcp.get_tools()
+
+    async def _call_llm(self, messages: List[Dict[str, str]]) -> str:
+        """Internal helper to call the LLM."""
+        return await _llm_call(messages)
 
     async def route_request(self, query: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
         """
@@ -559,7 +569,7 @@ class MCPBridge:
         )
 
         try:
-            response = await _call_llm([
+            response = await self._call_llm([
                 {"role": "system", "content": "You are a planning assistant."},
                 {"role": "user", "content": planning_prompt},
             ])

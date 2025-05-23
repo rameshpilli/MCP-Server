@@ -1,13 +1,12 @@
 import asyncio
 from unittest.mock import patch
-import app.mcp_bridge as mcp_bridge
 from app.mcp_bridge import MCPBridge
 
 async def show_success():
     async def fake_call(messages):
         return '[{"tool": "search_docs", "parameters": {"query": "policy"}}]'
 
-    with patch.object(mcp_bridge, "_call_llm", side_effect=fake_call), \
+    with patch.object(MCPBridge, "_call_llm", side_effect=fake_call), \
          patch.object(MCPBridge, "_log_plan", lambda self, plan: None):
 
         bridge = MCPBridge()
@@ -24,7 +23,7 @@ async def show_fallback():
             "endpoints": [{"type": "tool", "name": "server_info", "params": {}}],
         }
 
-    with patch.object(mcp_bridge, "_call_llm", side_effect=bad_call), \
+    with patch.object(MCPBridge, "_call_llm", side_effect=bad_call), \
          patch.object(MCPBridge, "_log_plan", lambda self, plan: None), \
          patch.object(MCPBridge, "route_request", dummy_route):
 
