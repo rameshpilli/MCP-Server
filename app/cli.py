@@ -1,6 +1,16 @@
-"""
-CLI module for the CRM MCP Server.
-Provides the `uvx` command for running the Chainlit app.
+"""uvx command line interface.
+
+This module exposes the ``uvx`` command which is used to manage and run the CRM
+MCP server. The command group provides the following subcommands:
+
+* ``uvx run`` – start the FastAPI backend and the Chainlit UI together. This is
+  the main entry point when developing or testing the application.
+* ``uvx init`` – create the folders and configuration files required for a new
+  project. It sets up the environment so that the server can run.
+* ``uvx crm-mcp`` – run the server in ``stdio`` mode to integrate with
+  Chainlit's local tooling.
+
+Use ``uvx --help`` to see all available options for each subcommand.
 """
 
 import os
