@@ -61,6 +61,7 @@ async def server_info(ctx: Context) -> str:
         "\U0001F4E6 Available MCP Tools\n\n"
     )
 
+
     sections = []
     usage_hints: Dict[str, str] = {}
     for name, tool in sorted(tools.items()):
@@ -98,9 +99,13 @@ async def server_info(ctx: Context) -> str:
                     desc_text = ""
                 params.append(f"- `{param}`: {typ} – {desc_text}")
 
-        if params:
-            section_lines.append("Inputs:")
-            section_lines.extend(params)
+    sections = []
+    for namespace, ns_tools in tools_by_ns.items():
+        namespace_lines = [f"## {namespace}"]
+
+        for tool_name, tool in ns_tools:
+            desc = getattr(tool, "description", "No description")
+            section_lines = [f"\U0001F527 `{tool_name}`", f"Description: {desc}"]
 
         if usage_hint:
             section_lines.append(f"Hint: {usage_hint}")
