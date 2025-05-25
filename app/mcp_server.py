@@ -18,7 +18,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 from app.config import config
 from app.stdio_handler import run_stdio_mode
 from app.sse_handler import sse_endpoint, sse_process, sse_list_tools, sse_call_tool
-from app.registry.tools import register_tool, get_registered_tools
+from app.registry.tools import register_tool
 
 # Environment variables
 load_dotenv()
@@ -52,8 +52,8 @@ async def health_check(ctx: Context) -> str:
 @mcp.tool()
 async def server_info(ctx: Context) -> str:
     """Get server information"""
-    # Collect unique tool names with namespaces for clear display
-    tools = {t.full_name.strip() for t in get_registered_tools()}
+    # Collect tool names using the MCP API so auto-discovered tools are included
+    tools = await mcp.get_tools()
     tool_list = "\n".join(f"- `{name}`" for name in sorted(tools))
     return (
         f"# MCP Server Information\n"
