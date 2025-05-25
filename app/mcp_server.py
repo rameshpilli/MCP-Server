@@ -61,42 +61,51 @@ async def server_info(ctx: Context) -> str:
         "\U0001F4E6 Available MCP Tools\n\n"
     )
 
+    tool_groups = {}
+    for name, tool in tools.items():
+        ns, _ = name.split(":", 1) if ":" in name else ("default", name)
+        tool_groups.setdefault(ns, []).append((name, tool))
+
     sections = []
-    for name, tool in sorted(tools.items()):
-        desc = getattr(tool, "description", "No description")
-        section_lines = [f"\U0001F527 `{name}`", f"Description: {desc}"]
+    for ns in sorted(tool_groups):
+        tool_lines = [f"## {ns}"]
+        for name, tool in sorted(tool_groups[ns]):
+            desc = getattr(tool, "description", "No description")
+            section_lines = [f"\U0001F527 `{name}`", f"Description: {desc}"]
 
-        schema = None
-        for attr in ["input_schema", "schema", "parameters"]:
-            if hasattr(tool, attr) and getattr(tool, attr):
-                schema = getattr(tool, attr)
-                break
+            schema = None
+            for attr in ["input_schema", "schema", "parameters"]:
+                if hasattr(tool, attr) and getattr(tool, attr):
+                    schema = getattr(tool, attr)
+                    break
 
-        params = []
-        if schema:
-            if isinstance(schema, dict):
-                props = schema.get("properties") if "properties" in schema else schema
-            elif hasattr(schema, "model_json_schema"):
-                props = schema.model_json_schema().get("properties", {})
-            else:
-                props = {}
-
-            for param, info in props.items():
-                if isinstance(info, dict):
-                    typ = info.get("type")
-                    if not typ and isinstance(info.get("anyOf"), list):
-                        typ = ",".join(i.get("type", "") for i in info["anyOf"] if isinstance(i, dict))
-                    desc_text = info.get("description", "")
+            params = []
+            if schema:
+                if isinstance(schema, dict):
+                    props = schema.get("properties") if "properties" in schema else schema
+                elif hasattr(schema, "model_json_schema"):
+                    props = schema.model_json_schema().get("properties", {})
                 else:
-                    typ = str(info)
-                    desc_text = ""
-                params.append(f"- `{param}`: {typ} – {desc_text}")
+                    props = {}
 
-        if params:
-            section_lines.append("Inputs:")
-            section_lines.extend(params)
+                for param, info in props.items():
+                    if isinstance(info, dict):
+                        typ = info.get("type")
+                        if not typ and isinstance(info.get("anyOf"), list):
+                            typ = ",".join(i.get("type", "") for i in info["anyOf"] if isinstance(i, dict))
+                        desc_text = info.get("description", "")
+                    else:
+                        typ = str(info)
+                        desc_text = ""
+                    params.append(f"- `{param}`: {typ} – {desc_text}")
 
-        sections.append("\n".join(section_lines))
+            if params:
+                section_lines.append("Inputs:")
+                section_lines.extend(params)
+
+            tool_lines.append("\n".join(section_lines))
+
+        sections.append("\n".join(tool_lines))
 
     return header + "\n\n".join(sections)
 
