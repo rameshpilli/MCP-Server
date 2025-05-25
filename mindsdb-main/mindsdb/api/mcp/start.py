@@ -2,6 +2,8 @@ from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 from typing import Optional, Dict, Any
 from dataclasses import dataclass
+import argparse
+import os
 
 from mcp.server.fastmcp import FastMCP
 from mindsdb.api.mysql.mysql_proxy.classes.fake_mysql_proxy import FakeMysqlProxy
@@ -127,26 +129,39 @@ def list_databases() -> Dict[str, Any]:
         }
 
 
-def start(*args, **kwargs):
+def start(*args, host: str | None = None, port: int | None = None,
+          transport: str | None = None, **kwargs) -> None:
     """Start the MCP server
+
     Args:
-        host (str): Host to bind to
-        port (int): Port to listen on
+        host: Host to bind to
+        port: Port to listen on
+        transport: Transport to use when running the server
     """
     config = Config()
-    port = int(config['api'].get('mcp', {}).get('port', 47337))
-    host = config['api'].get('mcp', {}).get('host', '127.0.0.1')
+    host = host or config['api'].get('mcp', {}).get('host', '127.0.0.1')
+    port = port or int(config['api'].get('mcp', {}).get('port', 47337))
+    transport = transport or os.getenv("TRANSPORT", "sse")
 
-    logger.info(f"Starting MCP server on {host}:{port}")
+    logger.info(f"Starting MCP server on {host}:{port} using {transport} transport")
     mcp.settings.host = host
     mcp.settings.port = port
 
     try:
-        mcp.run(transport="sse")  # Use SSE transport instead of stdio
+        mcp.run(transport=transport)
     except Exception as e:
         logger.error(f"Error starting MCP server: {str(e)}")
         raise
 
 
 if __name__ == "__main__":
-    start()
+    parser = argparse.ArgumentParser(description="Start the MindsDB MCP server")
+    parser.add_argument("--host", help="Host to bind to")
+    parser.add_argument("--port", type=int, help="Port to listen on")
+    parser.add_argument(
+        "--transport",
+        help="Transport to use when running the server (e.g. 'sse' or 'stdio')",
+    )
+    args = parser.parse_args()
+
+    start(host=args.host, port=args.port, transport=args.transport)
