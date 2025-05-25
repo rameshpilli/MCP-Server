@@ -7,6 +7,8 @@ This module provides a registry for managing and accessing resources in the MCP 
 from typing import Dict, Any, Optional
 from pydantic import BaseModel
 
+from .base import BaseRegistry
+
 class ResourceDefinition(BaseModel):
     """Definition of an external resource or API integration"""
     name: str
@@ -21,58 +23,23 @@ class ResourceDefinition(BaseModel):
         """Get the fully qualified name (namespace:name)"""
         return f"{self.namespace}:{self.name}"
 
-class ResourceRegistry:
-    """Registry for external resources and API integrations"""
-    def __init__(self):
-        self._resources: Dict[str, ResourceDefinition] = {}
-    
-    def register(self, resource: ResourceDefinition):
-        """Register a new resource"""
-        self._resources[resource.full_name] = resource
-    
-    def get_resource(self, name: str, namespace: Optional[str] = None) -> ResourceDefinition:
-        """
-        Get a resource by name, optionally with namespace
-        
-        Args:
-            name: Resource name
-            namespace: Optional namespace. If not provided, will look for fully qualified name
-                       or search in the default namespace.
-        """
-        # Check if the name already contains a namespace
-        if ":" in name:
-            if name not in self._resources:
-                raise KeyError(f"Resource {name} not found")
-            return self._resources[name]
-        
-        # Use provided namespace or default
-        full_name = f"{namespace or 'default'}:{name}"
-        if full_name not in self._resources:
-            raise KeyError(f"Resource {full_name} not found")
-        return self._resources[full_name]
-    
-    def list_resources(self, namespace: Optional[str] = None) -> Dict[str, ResourceDefinition]:
-        """
-        List all registered resources
-        
-        Args:
-            namespace: Optional namespace to filter by
-        """
-        if namespace:
-            return {
-                name: resource 
-                for name, resource in self._resources.items() 
-                if name.startswith(f"{namespace}:")
-            }
-        return self._resources.copy()
-    
-    def list_namespaces(self) -> Dict[str, int]:
-        """List all namespaces and resource count"""
-        namespaces = {}
-        for name in self._resources.keys():
-            namespace = name.split(":", 1)[0]
-            namespaces[namespace] = namespaces.get(namespace, 0) + 1
-        return namespaces
+class ResourceRegistry(BaseRegistry[ResourceDefinition]):
+    """Registry for external resources and API integrations."""
+
+    def __init__(self) -> None:
+        super().__init__()
+
+    @property
+    def _resources(self) -> Dict[str, ResourceDefinition]:
+        return self._items
+
+    @_resources.setter
+    def _resources(self, value: Dict[str, ResourceDefinition]) -> None:  # pragma: no cover - legacy
+        self._items = value
+
+    # Aliases for backward compatibility
+    get_resource = BaseRegistry.get
+    list_resources = BaseRegistry.list_items
 
 # Create global registry instance
 registry = ResourceRegistry()

@@ -1,6 +1,8 @@
 from typing import Dict, Any, List, Optional
 from pydantic import BaseModel
 
+from .base import BaseRegistry
+
 class PromptTemplate(BaseModel):
     """Definition of a prompt template"""
     name: str
@@ -23,58 +25,23 @@ class PromptTemplate(BaseModel):
                 result = result.replace(f"{{{var}}}", str(kwargs[var]))
         return result
 
-class PromptRegistry:
-    """Registry for prompt templates"""
-    def __init__(self):
-        self._prompts: Dict[str, PromptTemplate] = {}
-    
-    def register(self, prompt: PromptTemplate):
-        """Register a new prompt template"""
-        self._prompts[prompt.full_name] = prompt
-    
-    def get_prompt(self, name: str, namespace: Optional[str] = None) -> PromptTemplate:
-        """
-        Get a prompt template by name, optionally with namespace
-        
-        Args:
-            name: Prompt template name
-            namespace: Optional namespace. If not provided, will look for fully qualified name
-                       or search in the default namespace.
-        """
-        # Check if the name already contains a namespace
-        if ":" in name:
-            if name not in self._prompts:
-                raise KeyError(f"Prompt template {name} not found")
-            return self._prompts[name]
-        
-        # Use provided namespace or default
-        full_name = f"{namespace or 'default'}:{name}"
-        if full_name not in self._prompts:
-            raise KeyError(f"Prompt template {full_name} not found")
-        return self._prompts[full_name]
-    
-    def list_prompts(self, namespace: Optional[str] = None) -> Dict[str, str]:
-        """
-        List all registered prompt templates and their descriptions
-        
-        Args:
-            namespace: Optional namespace to filter by
-        """
-        if namespace:
-            return {
-                name.split(":", 1)[1]: prompt.description 
-                for name, prompt in self._prompts.items() 
-                if name.startswith(f"{namespace}:")
-            }
-        return {name: prompt.description for name, prompt in self._prompts.items()}
-    
-    def list_namespaces(self) -> Dict[str, int]:
-        """List all namespaces and prompt template count"""
-        namespaces = {}
-        for name in self._prompts.keys():
-            namespace = name.split(":", 1)[0]
-            namespaces[namespace] = namespaces.get(namespace, 0) + 1
-        return namespaces
+class PromptRegistry(BaseRegistry[PromptTemplate]):
+    """Registry for prompt templates."""
+
+    def __init__(self) -> None:
+        super().__init__()
+
+    @property
+    def _prompts(self) -> Dict[str, PromptTemplate]:
+        return self._items
+
+    @_prompts.setter
+    def _prompts(self, value: Dict[str, PromptTemplate]) -> None:  # pragma: no cover - legacy
+        self._items = value
+
+    # Aliases for backward compatibility
+    get_prompt = BaseRegistry.get
+    list_prompts = BaseRegistry.list_items
 
 # Create global registry instance
 registry = PromptRegistry()
@@ -103,4 +70,4 @@ def register_prompt(name: str, description: str, template: str,
         metadata=metadata or {}
     )
     registry.register(prompt)
-    return prompt 
+    return prompt

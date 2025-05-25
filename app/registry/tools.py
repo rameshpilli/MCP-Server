@@ -12,6 +12,8 @@ import logging
 import asyncio
 from uuid import uuid4
 
+from .base import BaseRegistry
+
 from app.config import config
 
 logger = logging.getLogger(__name__)
@@ -30,57 +32,24 @@ class ToolDefinition(BaseModel):
         """Get the fully qualified name (namespace:name)"""
         return f"{self.namespace}:{self.name}"
 
-class ToolRegistry:
-    def __init__(self):
-        self._tools: Dict[str, ToolDefinition] = {}
-    
-    def register(self, tool: ToolDefinition):
-        """Register a new tool"""
-        self._tools[tool.full_name] = tool
-    
-    def get_tool(self, name: str, namespace: Optional[str] = None) -> ToolDefinition:
-        """
-        Get a tool by name, optionally with namespace
-        
-        Args:
-            name: Tool name
-            namespace: Optional namespace. If not provided, will look for fully qualified name
-                       or search in the default namespace.
-        """
-        # Check if the name already contains a namespace
-        if ":" in name:
-            if name not in self._tools:
-                raise KeyError(f"Tool {name} not found")
-            return self._tools[name]
-        
-        # Use provided namespace or default
-        full_name = f"{namespace or 'default'}:{name}"
-        if full_name not in self._tools:
-            raise KeyError(f"Tool {full_name} not found")
-        return self._tools[full_name]
-    
-    def list_tools(self, namespace: Optional[str] = None) -> Dict[str, str]:
-        """
-        List all registered tools and their descriptions
-        
-        Args:
-            namespace: Optional namespace to filter by
-        """
-        if namespace:
-            return {
-                name.split(":", 1)[1]: tool.description 
-                for name, tool in self._tools.items() 
-                if name.startswith(f"{namespace}:")
-            }
-        return {name: tool.description for name, tool in self._tools.items()}
-    
-    def list_namespaces(self) -> Dict[str, int]:
-        """List all namespaces and tool count"""
-        namespaces = {}
-        for name in self._tools.keys():
-            namespace = name.split(":", 1)[0]
-            namespaces[namespace] = namespaces.get(namespace, 0) + 1
-        return namespaces
+class ToolRegistry(BaseRegistry[ToolDefinition]):
+    """Registry for tools."""
+
+    def __init__(self) -> None:
+        super().__init__()
+
+    # Backwards compatible access to the underlying dict
+    @property
+    def _tools(self) -> Dict[str, ToolDefinition]:
+        return self._items
+
+    @_tools.setter
+    def _tools(self, value: Dict[str, ToolDefinition]) -> None:  # pragma: no cover - legacy
+        self._items = value
+
+    # Aliases for previous method names
+    get_tool = BaseRegistry.get
+    list_tools = BaseRegistry.list_items
 
 # Create global registry instance
 registry = ToolRegistry()
