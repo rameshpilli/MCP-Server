@@ -178,6 +178,13 @@ python run.py
 python app/mcp_server.py
 ```
 
+To specify the server mode, use the `--mode` flag:
+```bash
+python app/mcp_server.py --mode http   # default, enables SSE
+python app/mcp_server.py --mode stdio  # run in STDIO mode
+```
+SSE is available when running in `http` mode.
+
 2. Start the FastAPI server:
 ```bash
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
