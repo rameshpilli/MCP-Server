@@ -1,6 +1,9 @@
 # app/config.py
 import os
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except Exception:  # pragma: no cover - optional dependency
+    load_dotenv = lambda *args, **kwargs: None
 from pathlib import Path
 from typing import Optional
 
