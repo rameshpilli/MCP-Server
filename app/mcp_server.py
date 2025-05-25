@@ -61,42 +61,53 @@ async def server_info(ctx: Context) -> str:
         "\U0001F4E6 Available MCP Tools\n\n"
     )
 
-    sections = []
+    # Group tools by namespace while preserving sorted order within each namespace
+    tools_by_ns = {}
     for name, tool in sorted(tools.items()):
-        desc = getattr(tool, "description", "No description")
-        section_lines = [f"\U0001F527 `{name}`", f"Description: {desc}"]
+        namespace, tool_name = name.split(":", 1) if ":" in name else ("default", name)
+        tools_by_ns.setdefault(namespace, []).append((tool_name, tool))
 
-        schema = None
-        for attr in ["input_schema", "schema", "parameters"]:
-            if hasattr(tool, attr) and getattr(tool, attr):
-                schema = getattr(tool, attr)
-                break
+    sections = []
+    for namespace, ns_tools in tools_by_ns.items():
+        namespace_lines = [f"## {namespace}"]
 
-        params = []
-        if schema:
-            if isinstance(schema, dict):
-                props = schema.get("properties") if "properties" in schema else schema
-            elif hasattr(schema, "model_json_schema"):
-                props = schema.model_json_schema().get("properties", {})
-            else:
-                props = {}
+        for tool_name, tool in ns_tools:
+            desc = getattr(tool, "description", "No description")
+            section_lines = [f"\U0001F527 `{tool_name}`", f"Description: {desc}"]
 
-            for param, info in props.items():
-                if isinstance(info, dict):
-                    typ = info.get("type")
-                    if not typ and isinstance(info.get("anyOf"), list):
-                        typ = ",".join(i.get("type", "") for i in info["anyOf"] if isinstance(i, dict))
-                    desc_text = info.get("description", "")
+            schema = None
+            for attr in ["input_schema", "schema", "parameters"]:
+                if hasattr(tool, attr) and getattr(tool, attr):
+                    schema = getattr(tool, attr)
+                    break
+
+            params = []
+            if schema:
+                if isinstance(schema, dict):
+                    props = schema.get("properties") if "properties" in schema else schema
+                elif hasattr(schema, "model_json_schema"):
+                    props = schema.model_json_schema().get("properties", {})
                 else:
-                    typ = str(info)
-                    desc_text = ""
-                params.append(f"- `{param}`: {typ} – {desc_text}")
+                    props = {}
 
-        if params:
-            section_lines.append("Inputs:")
-            section_lines.extend(params)
+                for param, info in props.items():
+                    if isinstance(info, dict):
+                        typ = info.get("type")
+                        if not typ and isinstance(info.get("anyOf"), list):
+                            typ = ",".join(i.get("type", "") for i in info["anyOf"] if isinstance(i, dict))
+                        desc_text = info.get("description", "")
+                    else:
+                        typ = str(info)
+                        desc_text = ""
+                    params.append(f"\u2022 `{param}`: {typ} – {desc_text}")
 
-        sections.append("\n".join(section_lines))
+            if params:
+                section_lines.append("Inputs:")
+                section_lines.extend(params)
+
+            namespace_lines.append("\n".join(section_lines))
+
+        sections.append("\n".join(namespace_lines))
 
     return header + "\n\n".join(sections)
 
