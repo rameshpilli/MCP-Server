@@ -18,6 +18,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 from app.config import config
 from app.stdio_handler import run_stdio_mode
 from app.sse_handler import sse_endpoint, sse_process, sse_list_tools, sse_call_tool
+from app.registry.tools import register_tool, get_registered_tools
 
 # Environment variables
 load_dotenv()
@@ -43,14 +44,22 @@ async def health_check(ctx: Context) -> str:
     return "MCP Server is healthy"
 
 
+@register_tool(
+    name="server_info",
+    description="Return MCP server details and available tools",
+    namespace="default",
+)
 @mcp.tool()
 async def server_info(ctx: Context) -> str:
     """Get server information"""
-    return f"""
-# MCP Server Information
-**Host**: {config.MCP_SERVER_HOST}
-**Port**: {config.MCP_SERVER_PORT}
-"""
+    tools = get_registered_tools()
+    tool_list = "\n".join(f"- {tool.full_name}" for tool in tools)
+    return (
+        f"# MCP Server Information\n"
+        f"**Host**: {config.MCP_SERVER_HOST}\n"
+        f"**Port**: {config.MCP_SERVER_PORT}\n\n"
+        f"## Registered Tools\n{tool_list}"
+    )
 
 # Auto-discover tools in app.tools package
 try:
