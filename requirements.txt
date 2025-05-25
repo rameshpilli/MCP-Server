@@ -18,6 +18,7 @@ click>=8.0.0
 fastmcp>=0.1.0
 openai>=1.0.0
 cohere>=4.32
+langchain>=0.3.25
 # Pin anthropic below 1.0 for Python 3.11 compatibility
 anthropic>=0.5,<1.0.0
 
