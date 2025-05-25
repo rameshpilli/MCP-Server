@@ -442,8 +442,13 @@ def main_factory():
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MCP Server")
-    parser.add_argument("--mode", choices=["http", "stdio"], default="http",
-                        help="Server mode: 'http' for HTTP/SSE or 'stdio' for STDIO transport")
+    parser.add_argument(
+        "--server_type", "--mode",
+        dest="mode",
+        choices=["http", "stdio"],
+        default="http",
+        help="Server mode: 'http' for HTTP/SSE or 'stdio' for STDIO transport",
+    )
     args = parser.parse_args()
 
     if args.mode == "stdio":
