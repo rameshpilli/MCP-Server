@@ -52,8 +52,9 @@ async def health_check(ctx: Context) -> str:
 @mcp.tool()
 async def server_info(ctx: Context) -> str:
     """Get server information"""
-    tools = sorted({t.full_name for t in get_registered_tools()})
-    tool_list = "\n".join(f"- `{name}`" for name in tools)
+    # Collect unique tool names with namespaces for clear display
+    tools = {t.full_name.strip() for t in get_registered_tools()}
+    tool_list = "\n".join(f"- `{name}`" for name in sorted(tools))
     return (
         f"# MCP Server Information\n"
         f"**Host**: {config.MCP_SERVER_HOST}\n"
