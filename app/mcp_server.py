@@ -62,9 +62,15 @@ async def server_info(ctx: Context) -> str:
     )
 
     sections = []
+    usage_hints: Dict[str, str] = {}
     for name, tool in sorted(tools.items()):
         desc = getattr(tool, "description", "No description")
         section_lines = [f"\U0001F527 `{name}`", f"Description: {desc}"]
+
+        # Collect simple usage hints for potential later use
+        usage_hint = tool.metadata.get("usage") if hasattr(tool, "metadata") else None
+        if usage_hint:
+            usage_hints[name] = usage_hint
 
         schema = None
         for attr in ["input_schema", "schema", "parameters"]:
@@ -95,6 +101,9 @@ async def server_info(ctx: Context) -> str:
         if params:
             section_lines.append("Inputs:")
             section_lines.extend(params)
+
+        if usage_hint:
+            section_lines.append(f"Hint: {usage_hint}")
 
         sections.append("\n".join(section_lines))
 
