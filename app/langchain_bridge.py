@@ -15,7 +15,6 @@ from typing import Any, Dict, List, Optional
 
 from .llm_wrapper import LLMWrapper
 from .mcp_bridge import MCPBridge
-from app.client import mcp_client
 from .config import config
 
 logger = logging.getLogger(__name__)
@@ -38,7 +37,10 @@ class LangChainBridge(MCPBridge):
         self._AgentType = AgentType
 
         # Inject our internal LLM (via wrapper) instead of OpenAI
-        self.llm = llm or LLMWrapper(call_llm_fn=mcp_client.call_llm)
+        if llm is None:
+            from app.client import mcp_client  # local import to avoid cycle
+            llm = LLMWrapper(call_llm_fn=mcp_client.call_llm)
+        self.llm = llm
 
     async def _build_tools(self) -> List[Any]:
         """Wrap all MCP tools as LangChain-compatible tools."""

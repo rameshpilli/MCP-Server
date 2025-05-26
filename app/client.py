@@ -11,7 +11,6 @@ from .config import config
 from .utils.logger import log_interaction, log_error
 from .mcp_bridge import MCPBridge
 from fastmcp import Context
-from app.mcp_server import mcp
 import logging
 logger = logging.getLogger(__name__)
 
@@ -25,8 +24,8 @@ class MCPClient:
         self.llm_model = config.LLM_MODEL
         self.llm_base_url = config.LLM_BASE_URL
 
-        # Initialize the MCP Bridge - stateless component
-        self.bridge = MCPBridge()
+        # Initialize the MCP Bridge lazily to avoid circular imports
+        self.bridge = None
 
         # Cache timeouts for connection discovery
         self._mcp_port_cache = None
@@ -248,6 +247,8 @@ class MCPClient:
             )
 
             # Use the bridge to route the request
+            if self.bridge is None:
+                self.bridge = MCPBridge()
             routing = await self.bridge.route_request(message, context)
 
             # Execute tools based on routing
@@ -294,6 +295,7 @@ class MCPClient:
                             ctx = MockContext()
 
                             # Get all tools from the MCP server
+                            from app.mcp_server import mcp
                             tools = await mcp.get_tools()
 
                             # Find the specific tool we want
