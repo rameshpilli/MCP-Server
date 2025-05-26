@@ -1,15 +1,21 @@
-"""Experimental LangChain bridge.
+"""
+LangChainBridge:
+    - Experimental bridge that uses LangChain agents to plan tool execution.
+    - Unlike MCPBridge, this uses our internal LLM (via LLMWrapper) instead of OpenAI.
+    - Fallbacks to traditional Compass-based routing if agent planning fails.
 
-This module mirrors ``MCPBridge`` but delegates planning to LangChain
-agents. It keeps the same public interface so it can be swapped in place
-of ``MCPBridge`` for experiments.
+Why we use it:
+    - LangChain lets us intelligently route and chain tools based on user intent.
+    - We override their LLM usage with our internal bearer-token-based endpoint.
 """
 
 import json
 import logging
 from typing import Any, Dict, List, Optional
 
+from .llm_wrapper import LLMWrapper
 from .mcp_bridge import MCPBridge
+from app.client import mcp_client
 from .config import config
 
 logger = logging.getLogger(__name__)
@@ -22,25 +28,23 @@ class LangChainBridge(MCPBridge):
         super().__init__()
         try:
             from langchain.agents import AgentType, Tool, initialize_agent
-            from langchain.chat_models import ChatOpenAI
-        except Exception as exc:  # pragma: no cover - runtime dependency
-            raise ImportError(
-                "LangChain packages are required for LangChainBridge"
-            ) from exc
+            from langchain_community.chat_models import ChatOpenAI
+        except Exception as exc:
+            raise ImportError("LangChain packages are required for LangChainBridge") from exc
 
+        # LangChain agent configuration
         self._Tool = Tool
         self._initialize_agent = initialize_agent
         self._AgentType = AgentType
-        self.llm = llm or ChatOpenAI(
-            model_name=config.LLM_MODEL,
-            base_url=config.LLM_BASE_URL,
-            temperature=0,
-        )
+
+        # Inject our internal LLM (via wrapper) instead of OpenAI
+        self.llm = llm or LLMWrapper(call_llm_fn=mcp_client.call_llm)
 
     async def _build_tools(self) -> List[Any]:
-        """Return LangChain ``Tool`` objects wrapping registered MCP tools."""
+        """Wrap all MCP tools as LangChain-compatible tools."""
         tools = []
         available = await self.get_available_tools()
+
         for name, tool in available.items():
             async def _fn(text: str, tool_name: str = name) -> Any:
                 try:
@@ -57,12 +61,13 @@ class LangChainBridge(MCPBridge):
                     description=getattr(tool, "description", name),
                 )
             )
+
         return tools
 
     async def plan_tool_chain(
         self, query: str, context: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
-        """Generate a plan using LangChain's Zero Shot agent."""
+        """Use LangChain to generate a list of tools to run for this query."""
         tools = await self._build_tools()
         agent = self._initialize_agent(
             tools,
@@ -70,16 +75,22 @@ class LangChainBridge(MCPBridge):
             agent=self._AgentType.ZERO_SHOT_REACT_DESCRIPTION,
             verbose=False,
         )
-        result = await agent.aplan(query)
 
+        logger.info(f"Planning tool chain using LangChain for query: '{query}'")
+        try:
+            result = await agent.aplan(query)
+            logger.info(f"LangChain agent returned: {result}")
+        except Exception as e:
+            logger.error(f"LangChain agent failed: {e}")
+            raise
+
+        # Parse tool calls from agent response
         plan: List[Dict[str, Any]] = []
         for action, _ in result.get("intermediate_steps", []):
             name = getattr(action, "tool", None)
             if not name:
                 continue
-            args = (
-                action.tool_input if isinstance(action.tool_input, dict) else {}
-            )
+            args = action.tool_input if isinstance(action.tool_input, dict) else {}
             plan.append({"tool": name, "parameters": args})
 
         return self._validate_plan(plan)
@@ -87,14 +98,17 @@ class LangChainBridge(MCPBridge):
     async def route_request(
         self, query: str, context: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
-        """Route a request via LangChain planning with MCPBridge fallback."""
+        """
+        Try LangChain planning first. If it fails or returns nothing, fall back to normal Compass-based routing.
+        """
         try:
             plan = await self.plan_tool_chain(query, context)
-        except Exception as exc:  # pragma: no cover - runtime issues
+        except Exception as exc:
             logger.warning("LangChain planning failed: %s", exc)
             plan = []
 
         if not plan:
+            logger.info("LangChain returned no plan — falling back to Compass routing.")
             return await super().route_request(query, context)
 
         step = plan[0]
