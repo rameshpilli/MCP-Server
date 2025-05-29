@@ -23,7 +23,7 @@ from app.utils.column_profiler import ColumnProfiler, ColumnMetadata # Import th
 logger = logging.getLogger("mcp_server.tools.data_processor")
 
 # Helper function to ensure DataFrame
-def _ensure_dataframe(data: List[Dict[str, Any]]) -> pd.DataFrame:
+def _ensure_dataframe(data: Union[List[Dict[str, Any]], pd.DataFrame]) -> pd.DataFrame:
     if isinstance(data, pd.DataFrame):
         return data.copy() # Return a copy to avoid modifying original
     elif isinstance(data, list) and all(isinstance(item, dict) for item in data):

@@ -55,7 +55,7 @@ sns.set_context("talk")
 
 # --- Helper Functions ---
 
-def _ensure_dataframe_and_profile(data: List[Dict[str, Any]], profiler: ColumnProfiler) -> Tuple[Optional[pd.DataFrame], Optional[Dict[str, ColumnMetadata]]]:
+def _ensure_dataframe_and_profile(data: Union[List[Dict[str, Any]], pd.DataFrame], profiler: ColumnProfiler) -> Tuple[Optional[pd.DataFrame], Optional[Dict[str, ColumnMetadata]]]:
     """Convert data to DataFrame and profile it. Returns None, None if data is empty or invalid."""
     if isinstance(data, pd.DataFrame):
         df = data.copy()
@@ -388,7 +388,7 @@ def register_tools(mcp):
     @mcp.tool()
     async def analyze_trend(
         ctx: Context,
-        data: List[Dict[str, Any]],
+        data: Union[List[Dict[str, Any]], pd.DataFrame],
         time_column_original: Optional[str] = None,
         value_column_original: Optional[str] = None,
         group_column_original: Optional[str] = None,
@@ -494,7 +494,7 @@ def register_tools(mcp):
     @mcp.tool()
     async def detect_anomalies(
         ctx: Context,
-        data: List[Dict[str, Any]],
+        data: Union[List[Dict[str, Any]], pd.DataFrame],
         value_column_original: Optional[str] = None,
         time_column_original: Optional[str] = None,
         query: Optional[str] = None,
@@ -561,7 +561,7 @@ def register_tools(mcp):
     @mcp.tool()
     async def cluster_clients(
         ctx: Context,
-        data: List[Dict[str, Any]],
+        data: Union[List[Dict[str, Any]], pd.DataFrame],
         feature_columns_original: Optional[List[str]] = None,
         n_clusters: int = 0, # 0 means auto-detect
         id_column_original: Optional[str] = None,
@@ -652,7 +652,7 @@ def register_tools(mcp):
     @mcp.tool()
     async def correlation_matrix(
         ctx: Context,
-        data: List[Dict[str, Any]],
+        data: Union[List[Dict[str, Any]], pd.DataFrame],
         columns_original: Optional[List[str]] = None,
         query: Optional[str] = None,
         method: str = "pearson" # pearson, kendall, spearman
@@ -704,7 +704,7 @@ def register_tools(mcp):
     @mcp.tool()
     async def query_table_qa(
         ctx: Context,
-        data: List[Dict[str, Any]],
+        data: Union[List[Dict[str, Any]], pd.DataFrame],
         query: str
     ) -> str:
         """
@@ -784,7 +784,7 @@ Answer:
     @mcp.tool()
     async def generate_report_from_data(
         ctx: Context,
-        data: List[Dict[str, Any]],
+        data: Union[List[Dict[str, Any]], pd.DataFrame],
         title: str = "Data Analysis Report",
         query: Optional[str] = None # Optional query to guide which analyses are prioritized
     ) -> str:
@@ -846,7 +846,7 @@ Answer:
     @mcp.tool()
     async def export_visual(
         ctx: Context,
-        data: List[Dict[str, Any]],
+        data: Union[List[Dict[str, Any]], pd.DataFrame],
         export_type: str, # "chart" or "table"
         format: str, # "png", "pdf", "csv", "xlsx", "json"
         chart_type: Optional[str] = "bar", # For chart export
@@ -902,7 +902,7 @@ Answer:
     @mcp.tool()
     async def forecast_revenue(
         ctx: Context,
-        data: List[Dict[str, Any]],
+        data: Union[List[Dict[str, Any]], pd.DataFrame],
         time_column_original: Optional[str] = None,
         value_column_original: Optional[str] = None,
         periods_to_forecast: int = 12, # e.g., 12 months
@@ -1019,7 +1019,7 @@ Key Insights (be concise and focus on actionable information):
     @mcp.tool()
     async def rank_clients(
         ctx: Context,
-        data: List[Dict[str, Any]],
+        data: Union[List[Dict[str, Any]], pd.DataFrame],
         rank_by_original: List[str], # Columns to rank by (original names)
         ascending: Union[List[bool], bool] = False, # Corresponding sort orders
         id_column_original: Optional[str] = None,
@@ -1079,7 +1079,7 @@ Key Insights (be concise and focus on actionable information):
     @mcp.tool()
     async def filter_table(
         ctx: Context,
-        data: List[Dict[str, Any]],
+        data: Union[List[Dict[str, Any]], pd.DataFrame],
         filter_query: str, # Natural language filter query, e.g., "revenue > 1M and region is USA"
         output_format: str = "markdown" # markdown, json
     ) -> str:
