@@ -787,6 +787,66 @@ class ClientValueByProduct(BaseFinancialModel):
 # Helper Functions
 ###################
 
+def safe_parse_revenue(value: Any) -> float:
+    """
+    Safely parse a revenue value, handling 'N/A', None, and various string formats.
+    
+    Args:
+        value: The value to parse (could be str, int, float, or None)
+        
+    Returns:
+        Float value, or 0.0 if the value cannot be parsed
+    """
+    if value is None:
+        return 0.0
+    
+    if isinstance(value, (int, float)):
+        return float(value)
+    
+    if isinstance(value, str):
+        # Handle common 'N/A' cases
+        if value.upper() in ('N/A', 'NA', 'NULL', '', 'NONE'):
+            return 0.0
+        
+        # Clean the string and try to parse
+        try:
+            # Remove currency symbols, commas, and whitespace
+            clean_value = value.replace('$', '').replace(',', '').replace(' ', '')
+            if clean_value == '':
+                return 0.0
+            return float(clean_value)
+        except ValueError:
+            # If we can't parse it, return 0
+            return 0.0
+    
+    # For any other type, try to convert to float
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return 0.0
+
+def calculate_total_revenue(df: pd.DataFrame, revenue_field: str) -> float:
+    """
+    Calculate total revenue from a DataFrame column, safely handling N/A values.
+    
+    Args:
+        df: The DataFrame containing revenue data
+        revenue_field: The column name to sum
+        
+    Returns:
+        Total revenue as a float
+    """
+    if revenue_field not in df.columns:
+        return 0.0
+    
+    revenue_col = df[revenue_field]
+    total_revenue = 0.0
+    
+    for value in revenue_col:
+        total_revenue += safe_parse_revenue(value)
+    
+    return total_revenue
+
 def dataframe_to_markdown(df: pd.DataFrame) -> str:
     """
     Convert a pandas DataFrame to a markdown table string.
@@ -939,20 +999,8 @@ def register_tools(mcp):
                         revenue_field = 'Revenue Prev YTD'
                         logger.info(f"Using {revenue_field} for summary based on query context")
                     
-                    # For revenue columns, convert to float first
-                    revenue_col = df[revenue_field]
-                    logger.debug(f"Revenue column ({revenue_field}) values: {revenue_col.tolist()[:5]}")
-                    
-                    # Handle both formatted strings and raw numbers
-                    total_revenue = 0
-                    for rev in revenue_col:
-                        if isinstance(rev, str):
-                            # Remove commas and convert to float
-                            rev_clean = rev.replace(',', '').replace('$', '')
-                            total_revenue += float(rev_clean)
-                        elif isinstance(rev, (int, float)):
-                            total_revenue += float(rev)
-                    
+                    # Calculate total revenue using safe parsing
+                    total_revenue = calculate_total_revenue(df, revenue_field)
                     logger.debug(f"Calculated total revenue: {total_revenue}")
                     
                     # Create more descriptive summary
@@ -1034,8 +1082,7 @@ def register_tools(mcp):
                 
                 # Add summary information
                 try:
-                    revenue_col = df['Revenue YTD']
-                    total_revenue = sum(float(rev.replace(',', '')) for rev in revenue_col)
+                    total_revenue = calculate_total_revenue(df, 'Revenue YTD')
                     output += f"\n\nTotal Revenue: {total_revenue:,.2f} {currency}"
                 except Exception as e:
                     logger.error(f"Error calculating total revenue: {e}")
@@ -1133,8 +1180,7 @@ def register_tools(mcp):
                 
                 # Add summary information
                 try:
-                    revenue_col = df['Revenue YTD']
-                    total_revenue = sum(float(rev.replace(',', '')) for rev in revenue_col)
+                    total_revenue = calculate_total_revenue(df, 'Revenue YTD')
                     output += f"\n\nTotal Revenue: {total_revenue:,.2f} {currency}"
                 except Exception as e:
                     logger.error(f"Error calculating total revenue: {e}")
@@ -1237,7 +1283,7 @@ def register_tools(mcp):
             return f"Error retrieving data field information: {str(e)}"
 
 # Log registration of tools
-n ,,,,,logger.info("Registere,,,1d ClientView financial tools: get_top_clients, get_client_value_by_product, get_client_value_by_time, list_available_data_fields")
+logger.info("Registered ClientView financial tools: get_top_clients, get_client_value_by_product, get_client_value_by_time, list_available_data_fields")
 
 ###################
 # METADATA UTILITIES

@@ -183,27 +183,61 @@ class LLMWrapper(BaseChatModel):
         # Format messages to OpenAI-style prompt
         prompt = []
         for i, m in enumerate(messages):
-            logger.debug(f"Processing message {i}: type={type(m)}, content_preview={str(m.content)[:100]}...")
-            if isinstance(m, SystemMessage):
-                prompt.append({"role": "system", "content": m.content})
-                logger.debug(f"Added system message to prompt")
-            elif isinstance(m, HumanMessage):
-                prompt.append({"role": "user", "content": m.content})
-                logger.debug(f"Added user message to prompt")
-            elif isinstance(m, AIMessage):
-                prompt.append({"role": "assistant", "content": m.content})
-                logger.debug(f"Added assistant message to prompt")
-            else:
-                logger.warning(f"Unknown message type: {type(m)}")
-                # Try to handle it anyway if it has content
-                if hasattr(m, 'content'):
+            # CRITICAL FIX: Handle tuple/malformed message objects
+            try:
+                # First check if it's a tuple (common error case)
+                if isinstance(m, tuple):
+                    logger.error(f"Message {i} is a tuple: {m}. This indicates a data corruption issue.")
+                    # Try to extract content from tuple if possible
+                    if len(m) >= 2 and isinstance(m[1], str):
+                        content = m[1]
+                        role = "user"  # Default fallback
+                        logger.warning(f"Extracted content from tuple: {content[:100]}...")
+                        prompt.append({"role": role, "content": content})
+                        continue
+                    else:
+                        logger.error(f"Cannot extract content from malformed tuple: {m}")
+                        continue
+                
+                # Check if it has content attribute before accessing it
+                if not hasattr(m, 'content'):
+                    logger.error(f"Message {i} has no 'content' attribute. Type: {type(m)}, Value: {repr(m)}")
+                    continue
+                
+                content = m.content
+                if content is None:
+                    logger.warning(f"Message {i} has None content, skipping")
+                    continue
+                
+                logger.debug(f"Processing message {i}: type={type(m)}, content_preview={str(content)[:100]}...")
+                
+                if isinstance(m, SystemMessage):
+                    prompt.append({"role": "system", "content": content})
+                    logger.debug(f"Added system message to prompt")
+                elif isinstance(m, HumanMessage):
+                    prompt.append({"role": "user", "content": content})
+                    logger.debug(f"Added user message to prompt")
+                elif isinstance(m, AIMessage):
+                    prompt.append({"role": "assistant", "content": content})
+                    logger.debug(f"Added assistant message to prompt")
+                else:
+                    logger.warning(f"Unknown message type: {type(m)}")
+                    # Determine role based on type name
                     role = "user"  # Default fallback
-                    if "system" in str(type(m)).lower():
+                    type_name = str(type(m)).lower()
+                    if "system" in type_name:
                         role = "system"
-                    elif "ai" in str(type(m)).lower() or "assistant" in str(type(m)).lower():
+                    elif "ai" in type_name or "assistant" in type_name:
                         role = "assistant"
-                    prompt.append({"role": role, "content": m.content})
+                    
+                    prompt.append({"role": role, "content": content})
                     logger.debug(f"Added {role} message to prompt as fallback")
+                    
+            except Exception as e:
+                logger.error(f"Error processing message {i}: {e}")
+                logger.error(f"Message type: {type(m)}, repr: {repr(m)}")
+                # Skip this message and continue
+                continue
 
         logger.debug(f"Converted prompt: {prompt}")
         logger.debug(f"Prompt length: {len(prompt)}")
@@ -212,7 +246,8 @@ class LLMWrapper(BaseChatModel):
             logger.error(f"Empty prompt after conversion. Original messages: {messages}")
             logger.error(f"Message types: {[type(m) for m in messages]}")
             logger.error(f"First message repr: {repr(messages[0]) if messages else 'No messages'}")
-            raise ValueError("LLMWrapper: Cannot send empty prompt to LLM.")
+            # Return a default response instead of raising an error
+            return ChatResult(generations=[ChatGeneration(message=AIMessage(content="I'm sorry, I couldn't process that request due to a formatting issue."))])
 
         raw_response = await call_llm(prompt)
 
