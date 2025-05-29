@@ -148,6 +148,7 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, Base
 from langchain_core.outputs import ChatResult, ChatGeneration
 from pydantic import Field
 import asyncio
+import logging
 
 
 class LLMWrapper(BaseChatModel):
@@ -165,6 +166,10 @@ class LLMWrapper(BaseChatModel):
     async def _agenerate(
         self, messages: List[BaseMessage], stop: Optional[List[str]] = None, **kwargs
     ) -> ChatResult:
+        logger = logging.getLogger(__name__)
+        logger.debug(f"LLMWrapper received messages: {messages}")
+        logger.debug(f"Message types: {[type(m).__name__ for m in messages]}")
+        
         # Fallback to global MCP client
         if self.call_llm_fn is not None:
             call_llm = self.call_llm_fn
@@ -182,7 +187,10 @@ class LLMWrapper(BaseChatModel):
             elif isinstance(m, AIMessage):
                 prompt.append({"role": "assistant", "content": m.content})
 
+        logger.debug(f"Converted prompt: {prompt}")
+        
         if not prompt:
+            logger.error(f"Empty prompt after conversion. Original messages: {messages}")
             raise ValueError("LLMWrapper: Cannot send empty prompt to LLM.")
 
         raw_response = await call_llm(prompt)

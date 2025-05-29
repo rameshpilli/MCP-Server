@@ -251,6 +251,19 @@ class LangChainBridge(MCPBridge):
                 
                 logger.debug(f"Input with context: {input_with_context}")
                 logger.debug(f"Tools for prompt: {[f'{tool.name}: {tool.description}' for tool in tools]}")
+                
+                # Set debug logging for LangChain to see what's happening
+                import logging
+                langchain_logger = logging.getLogger('langchain')
+                langchain_logger.setLevel(logging.DEBUG)
+                
+                # Also set our own logger to debug
+                logger.setLevel(logging.DEBUG)
+                # Set handler to console if not already set
+                if not logger.handlers:
+                    handler = logging.StreamHandler()
+                    handler.setLevel(logging.DEBUG)
+                    logger.addHandler(handler)
                     
                 # Execute the agent
                 result = await agent_executor.ainvoke({
