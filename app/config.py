@@ -10,6 +10,11 @@ load_dotenv()
 class Config:
     # Base configuration
     BASE_DIR = Path(__file__).resolve().parent.parent
+    
+    # Server Version and Environment
+    VERSION: str = os.getenv("SERVER_VERSION", "1.0.0")
+    ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
+    
     # Path to parameter mappings file
     PARAMETER_MAPPINGS_PATH: str = os.getenv(
         "PARAMETER_MAPPINGS_PATH",

@@ -125,50 +125,52 @@ class LangChainBridge(MCPBridge):
     async def _build_tools(self) -> List[Any]:
         """Wrap all MCP tools as LangChain-compatible tools."""
         tools = []
-        available = await self.get_available_tools()
+        
+        # Get tools directly from FastMCP - this returns {tool_name: Tool} dict
+        available_tools = await self.mcp.get_tools()
 
-        for namespace, tool_dict in available.items():
-            for name, description in tool_dict.items():
-                tool_name = f"{namespace}:{name}" if namespace != "default" else name
-                
-                # Create a closure to capture the tool name
-                async def _create_tool_fn(tool_name=tool_name):
-                    async def _fn(text: str) -> Any:
-                        """Execute the tool with parameters extracted from text."""
+        for tool_name, tool_obj in available_tools.items():
+            # Get description from the tool object
+            description = getattr(tool_obj, 'description', f"Tool: {tool_name}")
+            
+            # Create a closure to capture the tool name
+            async def _create_tool_fn(tool_name=tool_name):
+                async def _fn(text: str) -> Any:
+                    """Execute the tool with parameters extracted from text."""
+                    try:
+                        # Try to parse as JSON first
                         try:
-                            # Try to parse as JSON first
-                            try:
-                                params = json.loads(text) if text else {}
-                            except Exception:
-                                # If not JSON, try to extract parameters using LLM
-                                schema = await self._get_tool_schema(tool_name)
-                                params = await extract_parameters_with_llm(text, schema, tool_name)
-                            
-                            # Execute the tool
-                            result = await self.execute_tool(tool_name, params)
-                            return result
-                        except Exception as e:
-                            logger.error(f"Error executing tool {tool_name}: {e}")
-                            return f"Error executing tool {tool_name}: {str(e)}"
-                    
-                    return _fn
+                            params = json.loads(text) if text else {}
+                        except Exception:
+                            # If not JSON, try to extract parameters using LLM
+                            schema = await self._get_tool_schema(tool_name)
+                            params = await extract_parameters_with_llm(text, schema, tool_name)
+                        
+                        # Execute the tool
+                        result = await self.execute_tool(tool_name, params)
+                        return result
+                    except Exception as e:
+                        logger.error(f"Error executing tool {tool_name}: {e}")
+                        return f"Error executing tool {tool_name}: {str(e)}"
                 
-                # Create the tool function
-                tool_fn = await _create_tool_fn()
-                
-                # Get tool schema for better function descriptions
-                schema = await self._get_tool_schema(tool_name)
-                
-                # Create LangChain tool
-                lc_tool = self._Tool(
-                    name=tool_name,
-                    func=tool_fn,
-                    coroutine=tool_fn,
-                    description=description,
-                    args_schema=schema
-                )
-                
-                tools.append(lc_tool)
+                return _fn
+            
+            # Create the tool function
+            tool_fn = await _create_tool_fn()
+            
+            # Get tool schema for better function descriptions
+            schema = await self._get_tool_schema(tool_name)
+            
+            # Create LangChain tool
+            lc_tool = self._Tool(
+                name=tool_name,
+                func=tool_fn,
+                coroutine=tool_fn,
+                description=description,
+                args_schema=schema
+            )
+            
+            tools.append(lc_tool)
 
         return tools
 
