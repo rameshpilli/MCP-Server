@@ -248,6 +248,9 @@ class LangChainBridge(MCPBridge):
                 if context:
                     context_str = json.dumps(context, indent=2)
                     input_with_context = f"{query}\n\nContext: {context_str}"
+                
+                logger.debug(f"Input with context: {input_with_context}")
+                logger.debug(f"Tools for prompt: {[f'{tool.name}: {tool.description}' for tool in tools]}")
                     
                 # Execute the agent
                 result = await agent_executor.ainvoke({
