@@ -164,16 +164,16 @@ class LangChainBridge(MCPBridge):
                 tool_fn = await _create_tool_fn()
                 
                 # Get tool schema for better function descriptions
-                schema = await self._get_tool_schema(tool_name)
-                logger.debug(f"Tool {tool_name} schema: {schema}")
+                # schema = await self._get_tool_schema(tool_name)
+                # logger.debug(f"Tool {tool_name} schema: {schema}")
                 
-                # Create LangChain tool
+                # Create LangChain tool without args_schema for now to avoid bound method error
                 lc_tool = self._Tool(
                     name=tool_name,
                     func=tool_fn,
                     coroutine=tool_fn,
-                    description=description,
-                    args_schema=schema
+                    description=description
+                    # args_schema=schema  # Removing this to avoid the bound method error
                 )
                 
                 tools.append(lc_tool)
