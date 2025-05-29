@@ -63,61 +63,62 @@ class LangChainBridge(MCPBridge):
         if tool_name in self._tool_schemas_cache:
             return self._tool_schemas_cache[tool_name]
         
-        tools = await self.get_available_tools()
-        for namespace, tool_dict in tools.items():
-            for name, description in tool_dict.items():
-                full_name = f"{namespace}:{name}" if namespace != "default" else name
-                if full_name == tool_name or name == tool_name:
-                    # Try to get schema from MCP
-                    if self.mcp:
-                        mcp_tools = await self.mcp.get_tools()
-                        if name in mcp_tools:
-                            tool_obj = mcp_tools[name]
-                            schema = {}
-                            
-                            # Try to extract schema from tool object
-                            for attr in ['input_schema', 'schema', 'parameters']:
-                                if hasattr(tool_obj, attr):
-                                    schema = getattr(tool_obj, attr)
-                                    break
-                            
-                            # If no schema found, try to extract from function signature
-                            if not schema and hasattr(tool_obj, 'fn'):
-                                sig = inspect.signature(tool_obj.fn)
-                                schema = {
-                                    "type": "object",
-                                    "properties": {}
-                                }
-                                
-                                # Skip first parameter (usually ctx/context)
-                                params = list(sig.parameters.items())
-                                if params and params[0][0] in ('ctx', 'context'):
-                                    params = params[1:]
-                                
-                                for param_name, param in params:
-                                    param_info = {
-                                        "type": "string"  # Default to string
-                                    }
-                                    
-                                    # Get annotation if available
-                                    if param.annotation != inspect.Parameter.empty:
-                                        if param.annotation == str:
-                                            param_info["type"] = "string"
-                                        elif param.annotation == int:
-                                            param_info["type"] = "integer"
-                                        elif param.annotation == float:
-                                            param_info["type"] = "number"
-                                        elif param.annotation == bool:
-                                            param_info["type"] = "boolean"
-                                    
-                                    # Get default if available
-                                    if param.default != inspect.Parameter.empty:
-                                        param_info["default"] = param.default
-                                    
-                                    schema["properties"][param_name] = param_info
-                            
-                            self._tool_schemas_cache[tool_name] = schema
-                            return schema
+        # Get tools directly from FastMCP
+        if self.mcp:
+            mcp_tools = await self.mcp.get_tools()
+            
+            # Look for the tool by name (handle namespaced names)
+            actual_tool_name = tool_name
+            if ":" in tool_name:
+                actual_tool_name = tool_name.split(":", 1)[1]
+            
+            if actual_tool_name in mcp_tools:
+                tool_obj = mcp_tools[actual_tool_name]
+                schema = {}
+                
+                # Try to extract schema from tool object
+                for attr in ['input_schema', 'schema', 'parameters']:
+                    if hasattr(tool_obj, attr):
+                        schema = getattr(tool_obj, attr)
+                        break
+                
+                # If no schema found, try to extract from function signature
+                if not schema and hasattr(tool_obj, 'fn'):
+                    sig = inspect.signature(tool_obj.fn)
+                    schema = {
+                        "type": "object",
+                        "properties": {}
+                    }
+                    
+                    # Skip first parameter (usually ctx/context)
+                    params = list(sig.parameters.items())
+                    if params and params[0][0] in ('ctx', 'context'):
+                        params = params[1:]
+                    
+                    for param_name, param in params:
+                        param_info = {
+                            "type": "string"  # Default to string
+                        }
+                        
+                        # Get annotation if available
+                        if param.annotation != inspect.Parameter.empty:
+                            if param.annotation == str:
+                                param_info["type"] = "string"
+                            elif param.annotation == int:
+                                param_info["type"] = "integer"
+                            elif param.annotation == float:
+                                param_info["type"] = "number"
+                            elif param.annotation == bool:
+                                param_info["type"] = "boolean"
+                        
+                        # Get default if available
+                        if param.default != inspect.Parameter.empty:
+                            param_info["default"] = param.default
+                        
+                        schema["properties"][param_name] = param_info
+                
+                self._tool_schemas_cache[tool_name] = schema
+                return schema
         
         # Default empty schema if not found
         return {"type": "object", "properties": {}}
