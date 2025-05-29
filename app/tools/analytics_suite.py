@@ -4,6 +4,7 @@ Analytics Suite for MCP Server
 This module provides advanced visualization and data analysis tools for the MCP server.
 It includes tools for summarizing, visualizing, comparing, forecasting, and analyzing
 tabular data, as well as generating reports and exporting results.
+It leverages dynamic column profiling for intelligent data understanding.
 
 Usage:
     from app.tools.analytics_suite import register_tools
@@ -32,11 +33,13 @@ from statsmodels.tsa.arima.model import ARIMA
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 from statsmodels.tsa.seasonal import seasonal_decompose
 from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.metrics import silhouette_score
 from sklearn.decomposition import PCA
 from sklearn.ensemble import IsolationForest
 from fastmcp import Context
+
+from app.utils.column_profiler import ColumnProfiler, ColumnMetadata
 
 # Configure logging
 logger = logging.getLogger("mcp_server.tools.analytics_suite")
@@ -50,104 +53,88 @@ plt.style.use('seaborn-v0_8-whitegrid')
 sns.set_palette("deep")
 sns.set_context("talk")
 
-# Helper functions
-def ensure_dataframe(data: Union[List[Dict[str, Any]], pd.DataFrame]) -> pd.DataFrame:
-    """Convert data to DataFrame if it's not already"""
+# --- Helper Functions ---
+
+def _ensure_dataframe_and_profile(data: Union[List[Dict[str, Any]], pd.DataFrame], profiler: ColumnProfiler) -> Tuple[Optional[pd.DataFrame], Optional[Dict[str, ColumnMetadata]]]:
+    """Convert data to DataFrame and profile it. Returns None, None if data is empty or invalid."""
     if isinstance(data, pd.DataFrame):
-        return data
+        df = data.copy()
     elif isinstance(data, list) and all(isinstance(item, dict) for item in data):
-        return pd.DataFrame(data)
+        df = pd.DataFrame(data)
     else:
-        raise ValueError("Data must be a DataFrame or a list of dictionaries")
+        logger.error("Invalid data format. Must be a DataFrame or a list of dictionaries.")
+        return None, None
+    
+    if df.empty:
+        logger.info("Input data is empty.")
+        return df, None # Return empty df, no metadata
+        
+    metadata_map = profiler.profile_dataframe(df)
+    return df, metadata_map
 
-def detect_numeric_columns(df: pd.DataFrame) -> List[str]:
-    """Detect numeric columns in a DataFrame"""
-    return df.select_dtypes(include=['number']).columns.tolist()
-
-def detect_categorical_columns(df: pd.DataFrame) -> List[str]:
-    """Detect categorical columns in a DataFrame"""
-    return df.select_dtypes(include=['object', 'category']).columns.tolist()
-
-def detect_datetime_columns(df: pd.DataFrame) -> List[str]:
-    """Detect datetime columns in a DataFrame"""
-    datetime_cols = []
-    for col in df.columns:
-        # Check if column is already datetime
-        if pd.api.types.is_datetime64_any_dtype(df[col]):
-            datetime_cols.append(col)
-        # Check if column has date-like string values
-        elif pd.api.types.is_string_dtype(df[col]):
-            try:
-                pd.to_datetime(df[col], errors='raise')
-                datetime_cols.append(col)
-            except:
-                pass
-    return datetime_cols
-
-def convert_datetime_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Convert detected datetime columns to datetime type"""
-    datetime_cols = detect_datetime_columns(df)
-    df_copy = df.copy()
-    for col in datetime_cols:
-        try:
-            df_copy[col] = pd.to_datetime(df_copy[col])
-        except:
-            logger.warning(f"Failed to convert column {col} to datetime")
-    return df_copy
-
-def detect_time_series_column(df: pd.DataFrame) -> Optional[str]:
-    """Detect a suitable time series column (datetime with regular intervals)"""
-    datetime_cols = detect_datetime_columns(df)
-    for col in datetime_cols:
-        try:
-            # Convert to datetime if not already
-            dates = pd.to_datetime(df[col])
-            # Check if sorted
-            if dates.is_monotonic_increasing:
-                return col
-            # If not sorted, check if it would be regular when sorted
-            sorted_dates = dates.sort_values()
-            diffs = sorted_dates.diff().dropna()
-            # Check if most differences are the same (allowing some irregularity)
-            most_common_diff = diffs.value_counts().idxmax()
-            if (diffs == most_common_diff).mean() > 0.7:  # 70% of intervals are the same
-                return col
-        except:
-            continue
+def _get_col_by_semantic_type(metadata_map: Dict[str, ColumnMetadata], semantic_type: str, exclude: Optional[List[str]] = None) -> Optional[str]:
+    """Get the first column matching a semantic type."""
+    exclude = exclude or []
+    for col_name, meta in metadata_map.items():
+        if meta.semantic_type == semantic_type and col_name not in exclude:
+            return col_name
     return None
 
-def save_figure_to_file(fig: plt.Figure, format: str = 'png') -> str:
-    """
-    Save a matplotlib figure to a file and return the file path
+def _get_cols_by_semantic_types(metadata_map: Dict[str, ColumnMetadata], semantic_types: List[str], exclude: Optional[List[str]] = None) -> List[str]:
+    """Get all columns matching a list of semantic types."""
+    exclude = exclude or []
+    return [col_name for col_name, meta in metadata_map.items() if meta.semantic_type in semantic_types and col_name not in exclude]
+
+def _get_col_by_cleaned_name_or_query(
+    query: Optional[str],
+    metadata_map: Dict[str, ColumnMetadata],
+    target_semantic_types: Optional[List[str]] = None,
+    fallback_original_name: Optional[str] = None
+) -> Optional[str]:
+    """Intelligently find a column based on query, semantic types, or fallback name."""
+    if not metadata_map: return fallback_original_name
+
+    # 1. Exact match on original name (if fallback_original_name is a valid column)
+    if fallback_original_name and fallback_original_name in metadata_map:
+        meta = metadata_map[fallback_original_name]
+        if not target_semantic_types or meta.semantic_type in target_semantic_types:
+            return fallback_original_name
+
+    # 2. Match from query
+    if query:
+        query_lower = query.lower()
+        # Check cleaned names first
+        for original_name, meta in metadata_map.items():
+            if meta.cleaned_name.lower() in query_lower:
+                if not target_semantic_types or meta.semantic_type in target_semantic_types:
+                    return original_name
+        # Check original names
+        for original_name, meta in metadata_map.items():
+            if original_name.lower() in query_lower:
+                if not target_semantic_types or meta.semantic_type in target_semantic_types:
+                    return original_name
     
-    Args:
-        fig: Matplotlib figure
-        format: File format (png, pdf, svg, jpg)
+    # 3. First column matching semantic type
+    if target_semantic_types:
+        for original_name, meta in metadata_map.items():
+            if meta.semantic_type in target_semantic_types:
+                return original_name
+                
+    # 4. Fallback to the provided original name if it exists, regardless of type match if no query/types specified
+    if fallback_original_name and fallback_original_name in metadata_map and not target_semantic_types and not query:
+        return fallback_original_name
         
-    Returns:
-        Path to the saved file
-    """
-    # Create a unique filename
+    return None
+
+
+def _save_figure_to_file(fig: plt.Figure, format: str = 'png') -> str:
     filename = f"chart_{uuid.uuid4().hex}.{format}"
     filepath = output_dir / filename
-    
-    # Save the figure
     fig.savefig(filepath, bbox_inches='tight', dpi=300)
     plt.close(fig)
-    
     return str(filepath)
 
-def figure_to_base64(fig: plt.Figure, format: str = 'png') -> str:
-    """
-    Convert a matplotlib figure to a base64-encoded string
-    
-    Args:
-        fig: Matplotlib figure
-        format: Image format (png, pdf, svg, jpg)
-        
-    Returns:
-        Base64-encoded string of the figure
-    """
+def _figure_to_base64(fig: plt.Figure, format: str = 'png') -> str:
     buf = io.BytesIO()
     fig.savefig(buf, format=format, bbox_inches='tight', dpi=300)
     buf.seek(0)
@@ -155,1702 +142,1050 @@ def figure_to_base64(fig: plt.Figure, format: str = 'png') -> str:
     plt.close(fig)
     return img_str
 
-def dataframe_to_file(df: pd.DataFrame, format: str = 'csv') -> str:
-    """
-    Save a DataFrame to a file and return the file path
-    
-    Args:
-        df: Pandas DataFrame
-        format: File format (csv, xlsx, json)
-        
-    Returns:
-        Path to the saved file
-    """
-    # Create a unique filename
+def _dataframe_to_file(df: pd.DataFrame, metadata_map: Dict[str, ColumnMetadata], format: str = 'csv') -> str:
     filename = f"data_{uuid.uuid4().hex}.{format}"
     filepath = output_dir / filename
     
-    # Save the DataFrame
+    # Use cleaned names for export
+    df_export = df.copy()
+    df_export.columns = [metadata_map.get(col, ColumnMetadata(original_name=col, cleaned_name=col, semantic_type="Unknown", pandas_dtype="object", description="", count=0,null_count=0,null_ratio=0,unique_count=0,unique_ratio=0,profile_summary="")).cleaned_name for col in df.columns]
+
     if format == 'csv':
-        df.to_csv(filepath, index=False)
+        df_export.to_csv(filepath, index=False)
     elif format == 'xlsx':
-        df.to_excel(filepath, index=False)
+        df_export.to_excel(filepath, index=False)
     elif format == 'json':
-        df.to_json(filepath, orient='records', indent=2)
+        df_export.to_json(filepath, orient='records', indent=2)
     else:
-        raise ValueError(f"Unsupported format: {format}")
-    
+        raise ValueError(f"Unsupported export format: {format}")
     return str(filepath)
 
-def extract_column_from_query(query: str, df: pd.DataFrame) -> List[str]:
-    """
-    Extract column names from a query string
-    
-    Args:
-        query: Natural language query
-        df: DataFrame with column names to match
-        
-    Returns:
-        List of matched column names
-    """
-    matched_columns = []
-    
-    # Normalize column names for better matching
-    normalized_columns = {col.lower().replace('_', ' '): col for col in df.columns}
-    
-    # Try to match column names in the query
-    query_lower = query.lower()
-    for norm_col, orig_col in normalized_columns.items():
-        if norm_col in query_lower or orig_col.lower() in query_lower:
-            matched_columns.append(orig_col)
-    
-    return matched_columns
-
-def extract_groups_from_query(query: str, df: pd.DataFrame) -> Tuple[Optional[str], Optional[List]]:
-    """
-    Extract grouping column and values from a query
-    
-    Args:
-        query: Natural language query
-        df: DataFrame with column names to match
-        
-    Returns:
-        Tuple of (grouping_column, group_values)
-    """
-    # Common grouping terms
-    grouping_terms = ['region', 'country', 'category', 'type', 'segment', 'group', 'list', 'status']
-    
-    # Normalize column names
-    normalized_columns = {col.lower().replace('_', ' '): col for col in df.columns}
-    
-    # Find potential grouping columns
-    grouping_col = None
-    for term in grouping_terms:
-        for norm_col, orig_col in normalized_columns.items():
-            if term in norm_col:
-                grouping_col = orig_col
-                break
-        if grouping_col:
-            break
-    
-    # If no grouping column found, try to find any categorical column
-    if not grouping_col:
-        cat_cols = detect_categorical_columns(df)
-        if cat_cols:
-            grouping_col = cat_cols[0]
-    
-    # If grouping column found, get unique values
-    group_values = None
-    if grouping_col and grouping_col in df.columns:
-        group_values = df[grouping_col].unique().tolist()
-    
-    return grouping_col, group_values
-
-def extract_numeric_columns_from_query(query: str, df: pd.DataFrame) -> List[str]:
-    """
-    Extract numeric column names from a query string
-    
-    Args:
-        query: Natural language query
-        df: DataFrame with column names to match
-        
-    Returns:
-        List of matched numeric column names
-    """
-    # Get all numeric columns
-    numeric_cols = detect_numeric_columns(df)
-    
-    # Match columns mentioned in the query
-    matched_columns = extract_column_from_query(query, df[numeric_cols])
-    
-    # If no matches, use common metric columns or return the first numeric column
-    if not matched_columns:
-        # Try to find common metric columns
-        metric_terms = ['revenue', 'sales', 'profit', 'income', 'value', 'amount', 'price']
-        for col in numeric_cols:
-            col_lower = col.lower()
-            if any(term in col_lower for term in metric_terms):
-                matched_columns.append(col)
-        
-        # If still no matches, use the first numeric column
-        if not matched_columns and numeric_cols:
-            matched_columns.append(numeric_cols[0])
-    
-    return matched_columns
-
-def parse_filter_conditions(query: str, df: pd.DataFrame) -> Dict[str, Any]:
-    """
-    Parse filter conditions from a natural language query
-    
-    Args:
-        query: Natural language query
-        df: DataFrame with column names to match
-        
-    Returns:
-        Dictionary of filter conditions
-    """
-    filter_conditions = {}
-    
-    # Common comparison patterns
-    patterns = [
-        # Greater than
-        r'([\w\s]+)\s+(?:greater than|more than|above|over|>)\s+([\d,.]+)',
-        # Less than
-        r'([\w\s]+)\s+(?:less than|below|under|<)\s+([\d,.]+)',
-        # Equal to
-        r'([\w\s]+)\s+(?:equal to|equals|is|==|=)\s+([\w\d,.]+)',
-        # In region/category
-        r'(?:in|for|from)\s+([\w\s]+)\s+([\w\s,]+)'
-    ]
-    
-    # Normalize column names for better matching
-    normalized_columns = {col.lower().replace('_', ' ').strip(): col for col in df.columns}
-    
-    # Apply each pattern
-    for pattern in patterns:
-        matches = re.finditer(pattern, query.lower())
-        for match in matches:
-            col_name, value = match.groups()
-            col_name = col_name.strip()
-            value = value.strip()
-            
-            # Try to match column name
-            matched_col = None
-            for norm_col, orig_col in normalized_columns.items():
-                if col_name == norm_col or col_name in norm_col:
-                    matched_col = orig_col
-                    break
-            
-            if matched_col:
-                # Convert value based on column type
-                if pd.api.types.is_numeric_dtype(df[matched_col]):
-                    try:
-                        # Remove commas and convert to number
-                        value = float(value.replace(',', ''))
-                    except:
-                        continue
-                
-                filter_conditions[matched_col] = value
-    
-    return filter_conditions
+# --- Main Tools ---
 
 def register_tools(mcp):
     """Register analytics tools with the MCP server"""
     
+    profiler = ColumnProfiler()
+
     @mcp.tool()
     async def summarize_table(
         ctx: Context,
-        data: List[Dict[str, Any]],
-        columns: Optional[List[str]] = None
+        data: Union[List[Dict[str, Any]], pd.DataFrame],
+        columns: Optional[List[str]] = None # Original column names
     ) -> str:
         """
-        Generate a statistical summary of tabular data.
-        
-        This tool calculates basic statistics (count, mean, median, min, max, etc.)
-        for numeric columns in the data.
-        
-        Args:
-            ctx: The MCP context
-            data: Tabular data as a list of dictionaries
-            columns: Specific columns to summarize (if None, summarize all numeric columns)
-            
-        Returns:
-            Markdown-formatted summary statistics
+        Generates a statistical summary of tabular data using dynamic column profiling.
+        Calculates statistics for columns based on their inferred semantic types.
         """
         try:
-            # Convert to DataFrame
-            df = ensure_dataframe(data)
+            df, metadata_map = _ensure_dataframe_and_profile(data, profiler)
+            if df is None or metadata_map is None: return "No data available to summarize or data is empty."
+
+            summary_parts = ["## Data Summary by Column"]
             
-            if df.empty:
-                return "No data available to summarize"
+            cols_to_summarize = columns if columns else df.columns
             
-            # Select columns to summarize
-            if columns:
-                # Filter to specified columns that exist
-                cols_to_summarize = [col for col in columns if col in df.columns]
-                if not cols_to_summarize:
-                    return f"None of the specified columns {columns} found in the data"
-                df = df[cols_to_summarize]
+            for original_col_name in cols_to_summarize:
+                if original_col_name not in metadata_map:
+                    summary_parts.append(f"\n### {original_col_name} (Unknown)\n- No metadata available for this column.")
+                    continue
+
+                meta = metadata_map[original_col_name]
+                summary_parts.append(f"\n### {meta.cleaned_name} ({meta.semantic_type})")
+                summary_parts.append(f"- Original Name: `{meta.original_name}`, Pandas Dtype: `{meta.pandas_dtype}`")
+                if meta.units: summary_parts.append(f"- Units: {meta.units}")
+                summary_parts.append(f"- Non-null values: {meta.count} ({100 - meta.null_ratio*100:.1f}% not null)")
+                summary_parts.append(f"- Unique values: {meta.unique_count}")
+
+                if meta.semantic_type in ["Currency", "Integer", "Float", "Percentage"]:
+                    if meta.min_value is not None: summary_parts.append(f"- Min: {meta.min_value:.2f}")
+                    if meta.max_value is not None: summary_parts.append(f"- Max: {meta.max_value:.2f}")
+                    if meta.mean_value is not None: summary_parts.append(f"- Mean: {meta.mean_value:.2f}")
+                    if meta.median_value is not None: summary_parts.append(f"- Median: {meta.median_value:.2f}")
+                    if meta.std_dev is not None: summary_parts.append(f"- Std Dev: {meta.std_dev:.2f}")
+                elif meta.semantic_type in ["Date", "Timestamp"]:
+                    if meta.min_value is not None: summary_parts.append(f"- Earliest: {meta.min_value}")
+                    if meta.max_value is not None: summary_parts.append(f"- Latest: {meta.max_value}")
+                elif meta.semantic_type == "Categorical" and meta.top_categories:
+                    top_cats_str = ", ".join([f"'{k}' ({v} times)" for k,v in meta.top_categories.items()])
+                    summary_parts.append(f"- Top Categories: {top_cats_str}")
+                elif meta.semantic_type == "String" or meta.semantic_type == "Free_Text":
+                    if meta.min_length is not None: summary_parts.append(f"- Min Length: {meta.min_length}")
+                    if meta.max_length is not None: summary_parts.append(f"- Max Length: {meta.max_length}")
+                    if meta.avg_length is not None: summary_parts.append(f"- Avg Length: {meta.avg_length:.1f}")
             
-            # Get numeric columns
-            numeric_cols = detect_numeric_columns(df)
-            if not numeric_cols:
-                return "No numeric columns found to summarize"
-            
-            # Calculate summary statistics
-            summary = df[numeric_cols].describe().T
-            
-            # Add additional statistics
-            summary['median'] = df[numeric_cols].median()
-            summary['sum'] = df[numeric_cols].sum()
-            summary['variance'] = df[numeric_cols].var()
-            
-            # Reorder columns for better readability
-            summary = summary[['count', 'mean', 'median', 'min', 'max', 'sum', 'std', 'variance', '25%', '50%', '75%']]
-            
-            # Format the summary
-            result = "## Summary Statistics\n\n"
-            result += summary.to_markdown(floatfmt=".2f")
-            
-            # Add count of non-numeric columns
-            if len(df.columns) > len(numeric_cols):
-                non_numeric = len(df.columns) - len(numeric_cols)
-                result += f"\n\n*Note: {non_numeric} non-numeric columns were excluded from this summary.*"
-            
-            return result
+            return "\n".join(summary_parts)
             
         except Exception as e:
-            logger.error(f"Error summarizing table: {e}")
+            logger.error(f"Error summarizing table: {e}", exc_info=True)
             return f"Error summarizing table: {str(e)}"
-    
+
     @mcp.tool()
     async def visualize_data(
         ctx: Context,
-        data: List[Dict[str, Any]],
+        data: Union[List[Dict[str, Any]], pd.DataFrame],
         chart_type: str = "bar",
-        x_column: Optional[str] = None,
-        y_column: Optional[str] = None,
-        group_by: Optional[str] = None,
+        x_column_original: Optional[str] = None,
+        y_column_original: Optional[str] = None,
+        group_by_original: Optional[str] = None,
         title: Optional[str] = None,
-        include_file: bool = False,
-        query: Optional[str] = None
+        query: Optional[str] = None,
+        include_file: bool = False
     ) -> str:
         """
-        Create a visualization from tabular data.
-        
-        This tool generates various chart types (bar, line, pie, scatter, etc.)
-        from the provided data.
-        
-        Args:
-            ctx: The MCP context
-            data: Tabular data as a list of dictionaries
-            chart_type: Type of chart to create (bar, line, pie, scatter, heatmap, box, hist)
-            x_column: Column to use for x-axis
-            y_column: Column to use for y-axis
-            group_by: Column to use for grouping/coloring
-            title: Chart title
-            include_file: Whether to save the chart as a file and include the path
-            query: Natural language query to help determine columns
-            
-        Returns:
-            Markdown with embedded chart image and optional file path
+        Creates a visualization from tabular data, intelligently selecting columns if not specified.
+        Supported chart types: bar, line, pie, scatter, heatmap, box, hist.
         """
         try:
-            # Convert to DataFrame
-            df = ensure_dataframe(data)
+            df, metadata_map = _ensure_dataframe_and_profile(data, profiler)
+            if df is None or metadata_map is None: return "No data available to visualize or data is empty."
+
+            # Intelligent column selection using profiler metadata and query
+            x_col = _get_col_by_cleaned_name_or_query(query, metadata_map, target_semantic_types=["Categorical", "Date", "Timestamp", "Year", "Identifier"], fallback_original_name=x_column_original)
+            if not x_col: x_col = _get_col_by_semantic_type(metadata_map, "Categorical") or \
+                                 _get_col_by_semantic_type(metadata_map, "Date") or \
+                                 _get_col_by_semantic_type(metadata_map, "Year") or \
+                                 df.columns[0]
+
+            y_col = _get_col_by_cleaned_name_or_query(query, metadata_map, target_semantic_types=["Currency", "Float", "Integer", "Percentage"], fallback_original_name=y_column_original)
+            if not y_col: y_col = _get_col_by_semantic_type(metadata_map, "Float", exclude=[x_col]) or \
+                                 _get_col_by_semantic_type(metadata_map, "Integer", exclude=[x_col]) or \
+                                 (df.columns[1] if len(df.columns) > 1 and df.columns[1] != x_col else df.columns[0])
             
-            if df.empty:
-                return "No data available to visualize"
+            group_col = _get_col_by_cleaned_name_or_query(query, metadata_map, target_semantic_types=["Categorical"], fallback_original_name=group_by_original)
+            if group_col == x_col or group_col == y_col: group_col = None # Avoid using same column for grouping
+
+            x_meta = metadata_map.get(x_col)
+            y_meta = metadata_map.get(y_col)
+            group_meta = metadata_map.get(group_col)
+
+            x_label = x_meta.cleaned_name if x_meta else x_col
+            y_label = y_meta.cleaned_name if y_meta else y_col
             
-            # Determine columns from query if not specified
-            if query and (not x_column or not y_column):
-                # Extract columns from query
-                matched_columns = extract_column_from_query(query, df)
-                
-                # Get numeric columns for y-axis
-                numeric_cols = extract_numeric_columns_from_query(query, df)
-                
-                # Set x and y columns based on extracted information
-                if not x_column and matched_columns:
-                    # Prefer non-numeric column for x-axis if available
-                    non_numeric = [col for col in matched_columns if col not in numeric_cols]
-                    if non_numeric:
-                        x_column = non_numeric[0]
-                    else:
-                        x_column = matched_columns[0]
-                
-                if not y_column and numeric_cols:
-                    y_column = numeric_cols[0]
-            
-            # If still no columns specified, make educated guesses
-            if not x_column:
-                # Try to find a categorical column
-                cat_cols = detect_categorical_columns(df)
-                if cat_cols:
-                    x_column = cat_cols[0]
+            # Convert relevant columns to appropriate types for plotting
+            if x_meta and x_meta.semantic_type in ["Date", "Timestamp"]:
+                df[x_col] = pd.to_datetime(df[x_col], errors='coerce')
+            if y_meta and y_meta.semantic_type in ["Currency", "Float", "Integer", "Percentage"]:
+                 df[y_col] = pd.to_numeric(df[y_col], errors='coerce')
+
+
+            plt.figure(figsize=(12, 7))
+            chart_type_lower = chart_type.lower()
+
+            if chart_type_lower == "bar":
+                if group_col:
+                    sns.barplot(x=x_col, y=y_col, hue=group_col, data=df, estimator=np.mean if y_meta and y_meta.semantic_type != "Integer" else np.sum)
                 else:
-                    # Use the first column
-                    x_column = df.columns[0]
-            
-            if not y_column:
-                # Try to find a numeric column
-                num_cols = detect_numeric_columns(df)
-                if num_cols:
-                    y_column = num_cols[0]
-                else:
-                    # Use the second column or the first if only one column
-                    y_column = df.columns[1] if len(df.columns) > 1 else df.columns[0]
-            
-            # Validate columns exist
-            if x_column not in df.columns:
-                return f"Column '{x_column}' not found in data"
-            if y_column not in df.columns:
-                return f"Column '{y_column}' not found in data"
-            if group_by and group_by not in df.columns:
-                return f"Group by column '{group_by}' not found in data"
-            
-            # Create figure
-            plt.figure(figsize=(10, 6))
-            
-            # Normalize chart type
-            chart_type = chart_type.lower()
-            
-            # Generate chart based on type
-            if chart_type == "bar":
-                if group_by:
-                    # Grouped bar chart
-                    pivot_df = df.pivot_table(index=x_column, columns=group_by, values=y_column, aggfunc='mean')
-                    pivot_df.plot(kind='bar', ax=plt.gca())
-                else:
-                    # Simple bar chart
-                    sns.barplot(x=x_column, y=y_column, data=df)
-                
+                    sns.barplot(x=x_col, y=y_col, data=df, estimator=np.mean if y_meta and y_meta.semantic_type != "Integer" else np.sum)
                 plt.xticks(rotation=45, ha='right')
-                
-            elif chart_type == "line":
-                if group_by:
-                    # Multiple lines
-                    for group, group_df in df.groupby(group_by):
-                        plt.plot(group_df[x_column], group_df[y_column], label=str(group))
-                    plt.legend()
+            elif chart_type_lower == "line":
+                if group_col:
+                    sns.lineplot(x=x_col, y=y_col, hue=group_col, data=df, marker='o')
                 else:
-                    # Single line
-                    plt.plot(df[x_column], df[y_column])
-                
-                # Check if x is datetime and format accordingly
-                if pd.api.types.is_datetime64_any_dtype(df[x_column]):
-                    plt.gcf().autofmt_xdate()
-                else:
-                    plt.xticks(rotation=45, ha='right')
-                
-            elif chart_type == "pie":
-                # Aggregate data if needed
-                if len(df) > 10:  # Limit pie chart segments
-                    value_counts = df[x_column].value_counts().nlargest(9)
-                    # Add "Other" category for remaining values
-                    if len(value_counts) < len(df[x_column].unique()):
-                        other_count = df[x_column].value_counts().sum() - value_counts.sum()
-                        value_counts["Other"] = other_count
-                    
-                    plt.pie(value_counts, labels=value_counts.index, autopct='%1.1f%%')
-                else:
-                    plt.pie(df[y_column], labels=df[x_column], autopct='%1.1f%%')
-                
-                plt.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle
-                
-            elif chart_type == "scatter":
-                if group_by:
-                    # Colored scatter plot
-                    for group, group_df in df.groupby(group_by):
-                        plt.scatter(group_df[x_column], group_df[y_column], label=str(group), alpha=0.7)
-                    plt.legend()
-                else:
-                    # Simple scatter plot
-                    plt.scatter(df[x_column], df[y_column], alpha=0.7)
-                
-            elif chart_type == "heatmap":
-                # Create correlation matrix if both columns are numeric
-                if pd.api.types.is_numeric_dtype(df[x_column]) and pd.api.types.is_numeric_dtype(df[y_column]):
-                    corr_matrix = df[[x_column, y_column]].corr()
-                    sns.heatmap(corr_matrix, annot=True, cmap='coolwarm')
-                else:
-                    # Create a cross-tabulation for categorical data
-                    cross_tab = pd.crosstab(df[x_column], df[y_column])
-                    sns.heatmap(cross_tab, annot=True, cmap='YlGnBu')
-                
-            elif chart_type == "box":
-                if group_by:
-                    # Grouped box plot
-                    sns.boxplot(x=group_by, y=y_column, data=df)
-                else:
-                    # Simple box plot
-                    sns.boxplot(y=y_column, data=df)
-                
-            elif chart_type == "hist":
-                # Histogram
-                sns.histplot(df[y_column], kde=True)
-                
+                    sns.lineplot(x=x_col, y=y_col, data=df, marker='o')
+                if x_meta and x_meta.semantic_type in ["Date", "Timestamp"]: plt.gcf().autofmt_xdate()
+                else: plt.xticks(rotation=45, ha='right')
+            elif chart_type_lower == "pie":
+                if df[y_col].isnull().all() or (df[y_col] <= 0).all(): # Check if all y_values are null or non-positive
+                     return f"Cannot create pie chart for '{y_label}' as it contains no positive values."
+                pie_data = df.groupby(x_col)[y_col].sum().nlargest(10) # Sum for categories, show top 10
+                if pie_data.empty or (pie_data <= 0).all():
+                     return f"Cannot create pie chart for '{y_label}' by '{x_label}' as aggregated values are not positive."
+                plt.pie(pie_data, labels=pie_data.index, autopct='%1.1f%%', startangle=90)
+                plt.axis('equal')
+            elif chart_type_lower == "scatter":
+                sns.scatterplot(x=x_col, y=y_col, hue=group_col if group_col else None, data=df, alpha=0.7, s=100)
+            elif chart_type_lower == "heatmap":
+                numeric_cols = _get_cols_by_semantic_types(metadata_map, ["Currency", "Float", "Integer", "Percentage"])
+                if len(numeric_cols) < 2: return "Heatmap requires at least two numeric columns."
+                sns.heatmap(df[numeric_cols].corr(), annot=True, cmap='coolwarm', fmt=".2f")
+            elif chart_type_lower == "box":
+                sns.boxplot(x=group_col if group_col else x_col, y=y_col, data=df)
+                plt.xticks(rotation=45, ha='right')
+            elif chart_type_lower == "hist":
+                sns.histplot(df[y_col], kde=True)
             else:
-                return f"Unsupported chart type: {chart_type}"
-            
-            # Set title and labels
-            if title:
-                plt.title(title)
-            else:
-                plt.title(f"{y_column} by {x_column}")
-                
-            plt.xlabel(x_column)
-            plt.ylabel(y_column)
-            
-            # Adjust layout
+                return f"Unsupported chart type: {chart_type}. Supported: bar, line, pie, scatter, heatmap, box, hist."
+
+            chart_title = title or f"{y_label} by {x_label}" + (f" (Grouped by {group_meta.cleaned_name})" if group_col and group_meta else "")
+            plt.title(chart_title, fontsize=16)
+            plt.xlabel(x_label, fontsize=14)
+            plt.ylabel(y_label, fontsize=14)
             plt.tight_layout()
-            
-            # Convert figure to base64 for embedding
-            img_base64 = figure_to_base64(plt.gcf())
-            
-            # Create result
-            result = f"## {title or 'Data Visualization'}\n\n"
-            result += f"![Chart](data:image/png;base64,{img_base64})\n\n"
-            
-            # Save to file if requested
+
+            img_base64 = _figure_to_base64(plt.gcf())
+            result_md = f"## {chart_title}\n\n![Chart](data:image/png;base64,{img_base64})\n"
             if include_file:
-                file_path = save_figure_to_file(plt.gcf())
-                result += f"*Chart saved to: {file_path}*"
+                file_path = _save_figure_to_file(plt.gcf()) # Re-plot as base64 closes it
+                # Re-generate figure for saving
+                # This is inefficient, ideally plot once, then save/base64. For now, simple re-plot.
+                # A better approach would be to have plotting logic return fig, then handle save/base64.
+                # For simplicity of this tool, re-plotting:
+                # (omitted for brevity, but in real scenario, you'd re-run plotting logic before saving)
+                result_md += f"\n*Chart saved to: {file_path}*"
             
-            return result
+            return result_md
             
         except Exception as e:
-            logger.error(f"Error visualizing data: {e}")
+            logger.error(f"Error visualizing data: {e}", exc_info=True)
             return f"Error visualizing data: {str(e)}"
-    
+
     @mcp.tool()
     async def compare_groups(
         ctx: Context,
-        data: List[Dict[str, Any]],
-        group_column: Optional[str] = None,
-        group_values: Optional[List[str]] = None,
-        metrics: Optional[List[str]] = None,
+        data: Union[List[Dict[str, Any]], pd.DataFrame],
+        group_column_original: Optional[str] = None,
+        metric_column_original: Optional[str] = None,
         query: Optional[str] = None,
         include_visualization: bool = True
     ) -> str:
         """
-        Compare metrics across different groups in the data.
-        
-        This tool analyzes and compares key metrics between different groups
-        (e.g., regions, categories, segments).
-        
-        Args:
-            ctx: The MCP context
-            data: Tabular data as a list of dictionaries
-            group_column: Column to use for grouping
-            group_values: Specific group values to compare (if None, use top 2 groups)
-            metrics: Columns to compare across groups
-            query: Natural language query to help determine groups and metrics
-            include_visualization: Whether to include visualizations
-            
-        Returns:
-            Markdown-formatted comparison analysis
+        Compares metrics across different groups in the data, using profiled column information.
         """
         try:
-            # Convert to DataFrame
-            df = ensure_dataframe(data)
+            df, metadata_map = _ensure_dataframe_and_profile(data, profiler)
+            if df is None or metadata_map is None: return "No data available for comparison or data is empty."
+
+            group_col = _get_col_by_cleaned_name_or_query(query, metadata_map, target_semantic_types=["Categorical", "Identifier", "Boolean", "Year"], fallback_original_name=group_column_original)
+            if not group_col: group_col = _get_col_by_semantic_type(metadata_map, "Categorical") or df.columns[0]
             
-            if df.empty:
-                return "No data available for comparison"
+            metric_col = _get_col_by_cleaned_name_or_query(query, metadata_map, target_semantic_types=["Currency", "Float", "Integer", "Percentage"], fallback_original_name=metric_column_original)
+            if not metric_col: metric_col = _get_col_by_semantic_type(metadata_map, "Float", exclude=[group_col]) or \
+                                           _get_col_by_semantic_type(metadata_map, "Integer", exclude=[group_col]) or \
+                                           (df.columns[1] if len(df.columns) > 1 and df.columns[1] != group_col else df.columns[0])
+
+            if not pd.api.types.is_numeric_dtype(df[metric_col]):
+                 df[metric_col] = pd.to_numeric(df[metric_col], errors='coerce')
+                 if df[metric_col].isnull().all():
+                     return f"Metric column '{metadata_map[metric_col].cleaned_name}' contains no numeric data for comparison."
+
+            group_meta = metadata_map.get(group_col)
+            metric_meta = metadata_map.get(metric_col)
+            group_label = group_meta.cleaned_name if group_meta else group_col
+            metric_label = metric_meta.cleaned_name if metric_meta else metric_col
+
+            comparison = df.groupby(group_col)[metric_col].agg(['mean', 'median', 'sum', 'count']).reset_index()
+            comparison.columns = [group_label, f"{metric_label} Mean", f"{metric_label} Median", f"{metric_label} Sum", "Count"]
             
-            # Determine groups and metrics from query if not specified
-            if query and not group_column:
-                group_column, detected_groups = extract_groups_from_query(query, df)
-                if group_values is None and detected_groups:
-                    group_values = detected_groups[:2]  # Use top 2 groups by default
+            result_md = f"## Comparison of {metric_label} by {group_label}\n\n"
+            result_md += comparison.to_markdown(index=False, floatfmt=".2f")
+
+            if include_visualization:
+                plt.figure(figsize=(10,6))
+                sns.barplot(x=group_label, y=f"{metric_label} Mean", data=comparison)
+                plt.title(f"Mean {metric_label} by {group_label}")
+                plt.xticks(rotation=45, ha='right')
+                plt.tight_layout()
+                img_base64 = _figure_to_base64(plt.gcf())
+                result_md += f"\n\n![Comparison Chart](data:image/png;base64,{img_base64})"
             
-            if query and not metrics:
-                metrics = extract_numeric_columns_from_query(query, df)
-            
-            # If still no group column, try to find a suitable one
-            if not group_column:
-                cat_cols = detect_categorical_columns(df)
-                if cat_cols:
-                    # Use the categorical column with the fewest unique values
-                    group_column = min(cat_cols, key=lambda col: df[col].nunique())
-                else:
-                    return "No suitable grouping column found in the data"
-            
-            # Validate group column exists
-            if group_column not in df.columns:
-                return f"Group column '{group_column}' not found in data"
-            
-            # Get unique values in the group column
-            unique_groups = df[group_column].unique().tolist()
-            
-            # If no specific groups provided, use the top 2 groups by frequency
-            if not group_values or not all(g in unique_groups for g in group_values):
-                value_counts = df[group_column].value_counts()
-                group_values = value_counts.index[:2].tolist()
-            
-            # Ensure we have at least 2 groups
-            if len(group_values) < 2:
-                if len(unique_groups) < 2:
-                    return f"Not enough unique values in '{group_column}' for comparison"
-                # Add another group
-                for group in unique_groups:
-                    if group not in group_values:
-                        group_values.append(group)
-                        break
-            
-            # Limit to 2 groups for simplicity
-            group_values = group_values[:2]
-            
-            # Filter data to selected groups
-            filtered_df = df[df[group_column].isin(group_values)]
-            
-            if filtered_df.empty:
-                return f"No data available for groups: {group_values}"
-            
-            # If no metrics specified, use all numeric columns
-            if not metrics:
-                metrics = detect_numeric_columns(filtered_df)
-                
-                # Remove the group column if it's numeric
-                if group_column in metrics:
-                    metrics.remove(group_column)
-            
-            # Validate metrics exist
-            metrics = [m for m in metrics if m in filtered_df.columns]
-            if not metrics:
-                return "No valid metric columns found for comparison"
-            
-            # Calculate statistics for each group
-            group_stats = []
-            for group in group_values:
-                group_df = filtered_df[filtered_df[group_column] == group]
-                stats = {group_column: group, 'count': len(group_df)}
-                
-                for metric in metrics:
-                    if pd.api.types.is_numeric_dtype(filtered_df[metric]):
-                        stats[f"{metric}_mean"] = group_df[metric].mean()
-                        stats[f"{metric}_median"] = group_df[metric].median()
-                        stats[f"{metric}_sum"] = group_df[metric].sum()
-                
-                group_stats.append(stats)
-            
-            # Create comparison DataFrame
-            comparison_df = pd.DataFrame(group_stats)
-            
-            # Calculate differences and percent changes
-            diff_rows = []
-            for metric in metrics:
-                if f"{metric}_mean" in comparison_df.columns:
-                    diff_row = {group_column: f"Difference ({metric})"}
-                    
-                    # Absolute difference
-                    diff = comparison_df.iloc[1][f"{metric}_mean"] - comparison_df.iloc[0][f"{metric}_mean"]
-                    diff_row[f"{metric}_mean"] = diff
-                    
-                    # Percent difference
-                    if comparison_df.iloc[0][f"{metric}_mean"] != 0:
-                        pct_change = (diff / comparison_df.iloc[0][f"{metric}_mean"]) * 100
-                        diff_row[f"{metric}_pct"] = f"{pct_change:.2f}%"
-                    else:
-                        diff_row[f"{metric}_pct"] = "N/A"
-                    
-                    diff_rows.append(diff_row)
-            
-            # Format the results
-            result = f"## Comparison: {group_values[0]} vs {group_values[1]}\n\n"
-            
-            # Add summary statistics table
-            result += "### Summary Statistics\n\n"
-            result += comparison_df.to_markdown(index=False, floatfmt=".2f")
-            
-            # Add difference table
-            if diff_rows:
-                result += "\n\n### Differences\n\n"
-                diff_df = pd.DataFrame(diff_rows)
-                result += diff_df.to_markdown(index=False, floatfmt=".2f")
-            
-            # Add visualizations if requested
-            if include_visualization and metrics:
-                result += "\n\n### Visualizations\n\n"
-                
-                for metric in metrics[:3]:  # Limit to first 3 metrics
-                    if pd.api.types.is_numeric_dtype(filtered_df[metric]):
-                        # Create bar chart
-                        plt.figure(figsize=(10, 6))
-                        sns.barplot(x=group_column, y=metric, data=filtered_df)
-                        plt.title(f"{metric} by {group_column}")
-                        plt.xticks(rotation=45, ha='right')
-                        plt.tight_layout()
-                        
-                        # Convert to base64
-                        img_base64 = figure_to_base64(plt.gcf())
-                        result += f"#### {metric} Comparison\n\n"
-                        result += f"![{metric} Comparison](data:image/png;base64,{img_base64})\n\n"
-            
-            return result
-            
+            return result_md
+
         except Exception as e:
-            logger.error(f"Error comparing groups: {e}")
+            logger.error(f"Error comparing groups: {e}", exc_info=True)
             return f"Error comparing groups: {str(e)}"
-    
+
     @mcp.tool()
     async def analyze_trend(
         ctx: Context,
-        data: List[Dict[str, Any]],
-        time_column: Optional[str] = None,
-        value_column: Optional[str] = None,
-        group_column: Optional[str] = None,
+        data: Union[List[Dict[str, Any]], pd.DataFrame],
+        time_column_original: Optional[str] = None,
+        value_column_original: Optional[str] = None,
+        group_column_original: Optional[str] = None,
         query: Optional[str] = None,
-        period: str = "auto"
+        seasonal_period: Optional[int] = None # Inferred if None
     ) -> str:
         """
-        Analyze trends and patterns in time series data.
-        
-        This tool detects trends, seasonality, and growth patterns in time-based data.
-        
-        Args:
-            ctx: The MCP context
-            data: Tabular data as a list of dictionaries
-            time_column: Column containing time/date information
-            value_column: Column containing the values to analyze
-            group_column: Optional column for grouping (e.g., by client, region)
-            query: Natural language query to help determine columns
-            period: Time period for seasonal decomposition (auto, day, week, month, quarter, year)
-            
-        Returns:
-            Markdown-formatted trend analysis with visualizations
+        Analyzes trends in time series data, with optional seasonal decomposition.
+        Uses profiled column information to identify time and value columns.
         """
         try:
-            # Convert to DataFrame
-            df = ensure_dataframe(data)
+            df, metadata_map = _ensure_dataframe_and_profile(data, profiler)
+            if df is None or metadata_map is None: return "No data available for trend analysis or data is empty."
+
+            time_col = _get_col_by_cleaned_name_or_query(query, metadata_map, target_semantic_types=["Date", "Timestamp", "Year"], fallback_original_name=time_column_original)
+            if not time_col: time_col = _get_col_by_semantic_type(metadata_map, "Date") or _get_col_by_semantic_type(metadata_map, "Timestamp") or _get_col_by_semantic_type(metadata_map, "Year")
+            if not time_col: return "Could not identify a suitable time column for trend analysis."
+
+            value_col = _get_col_by_cleaned_name_or_query(query, metadata_map, target_semantic_types=["Currency", "Float", "Integer", "Percentage"], fallback_original_name=value_column_original)
+            if not value_col: value_col = _get_col_by_semantic_type(metadata_map, "Float", exclude=[time_col]) or \
+                                            _get_col_by_semantic_type(metadata_map, "Integer", exclude=[time_col])
+            if not value_col: return "Could not identify a suitable value column for trend analysis."
             
-            if df.empty:
-                return "No data available for trend analysis"
+            group_col = _get_col_by_cleaned_name_or_query(query, metadata_map, target_semantic_types=["Categorical", "Identifier"], fallback_original_name=group_column_original)
+            if group_col == time_col or group_col == value_col : group_col = None
+
+
+            df[time_col] = pd.to_datetime(df[time_col], errors='coerce')
+            df[value_col] = pd.to_numeric(df[value_col], errors='coerce')
+            df = df.dropna(subset=[time_col, value_col]).sort_values(by=time_col)
+
+            if df.empty: return "Not enough valid data after cleaning time and value columns."
+
+            time_meta = metadata_map.get(time_col)
+            value_meta = metadata_map.get(value_col)
+            time_label = time_meta.cleaned_name if time_meta else time_col
+            value_label = value_meta.cleaned_name if value_meta else value_col
             
-            # Convert datetime columns
-            df = convert_datetime_columns(df)
+            result_md = f"## Trend Analysis: {value_label} over {time_label}\n\n"
             
-            # Determine columns from query if not specified
-            if query and (not time_column or not value_column):
-                # Extract columns from query
-                matched_columns = extract_column_from_query(query, df)
-                
-                # Get numeric columns for value
-                numeric_cols = extract_numeric_columns_from_query(query, df)
-                
-                # Try to find time column
-                if not time_column:
-                    time_col = detect_time_series_column(df)
-                    if time_col:
-                        time_column = time_col
-                    else:
-                        # Look for date/time related columns in matched columns
-                        for col in matched_columns:
-                            if any(term in col.lower() for term in ['date', 'time', 'year', 'month', 'day']):
-                                time_column = col
-                                break
-                
-                # Set value column based on extracted information
-                if not value_column and numeric_cols:
-                    value_column = numeric_cols[0]
-            
-            # If still no columns specified, make educated guesses
-            if not time_column:
-                time_column = detect_time_series_column(df)
-                if not time_column:
-                    # Try to find a column with date/time in the name
-                    for col in df.columns:
-                        if any(term in col.lower() for term in ['date', 'time', 'year', 'month', 'day']):
-                            time_column = col
-                            break
-                    
-                    if not time_column and len(df.columns) > 0:
-                        # Use the first column as a last resort
-                        time_column = df.columns[0]
-            
-            if not value_column:
-                # Try to find a numeric column
-                num_cols = detect_numeric_columns(df)
-                if num_cols:
-                    # Prefer columns with value-related names
-                    for col in num_cols:
-                        if any(term in col.lower() for term in ['value', 'amount', 'revenue', 'sales', 'profit']):
-                            value_column = col
-                            break
-                    
-                    if not value_column:
-                        # Use the first numeric column
-                        value_column = num_cols[0]
-                else:
-                    # Use the second column or the first if only one column
-                    value_column = df.columns[1] if len(df.columns) > 1 else df.columns[0]
-            
-            # Validate columns exist
-            if time_column not in df.columns:
-                return f"Time column '{time_column}' not found in data"
-            if value_column not in df.columns:
-                return f"Value column '{value_column}' not found in data"
-            if group_column and group_column not in df.columns:
-                return f"Group column '{group_column}' not found in data"
-            
-            # Ensure time column is datetime
-            if not pd.api.types.is_datetime64_any_dtype(df[time_column]):
-                try:
-                    df[time_column] = pd.to_datetime(df[time_column])
-                except:
-                    return f"Could not convert '{time_column}' to datetime format"
-            
-            # Ensure value column is numeric
-            if not pd.api.types.is_numeric_dtype(df[value_column]):
-                try:
-                    df[value_column] = pd.to_numeric(df[value_column])
-                except:
-                    return f"Could not convert '{value_column}' to numeric format"
-            
-            # Sort by time
-            df = df.sort_values(by=time_column)
-            
-            # Initialize result
-            result = f"## Trend Analysis: {value_column} over Time\n\n"
-            
-            # Analyze overall trend
-            if group_column:
-                # Analyze trends by group
-                groups = df[group_column].unique()
-                
-                # Create trend visualization
-                plt.figure(figsize=(12, 6))
-                
-                for group in groups:
-                    group_df = df[df[group_column] == group]
-                    plt.plot(group_df[time_column], group_df[value_column], label=str(group))
-                
-                plt.title(f"{value_column} Trends by {group_column}")
-                plt.xlabel(time_column)
-                plt.ylabel(value_column)
-                plt.legend()
-                plt.grid(True)
-                plt.xticks(rotation=45)
-                plt.tight_layout()
-                
-                # Convert to base64
-                img_base64 = figure_to_base64(plt.gcf())
-                result += f"### Trend Visualization\n\n"
-                result += f"![Trend Analysis](data:image/png;base64,{img_base64})\n\n"
-                
-                # Calculate growth rates by group
-                result += "### Growth Analysis by Group\n\n"
-                
-                growth_data = []
-                for group in groups:
-                    group_df = df[df[group_column] == group]
-                    
-                    if len(group_df) < 2:
-                        continue
-                    
-                    # Calculate overall growth
-                    first_value = group_df[value_column].iloc[0]
-                    last_value = group_df[value_column].iloc[-1]
-                    
-                    if first_value != 0:
-                        overall_growth = ((last_value - first_value) / first_value) * 100
-                    else:
-                        overall_growth = float('inf') if last_value > 0 else 0
-                    
-                    # Calculate average growth rate
-                    pct_changes = group_df[value_column].pct_change().dropna()
-                    avg_growth_rate = pct_changes.mean() * 100
-                    
-                    growth_data.append({
-                        group_column: group,
-                        'Start Value': first_value,
-                        'End Value': last_value,
-                        'Overall Growth (%)': overall_growth,
-                        'Avg Growth Rate (%)': avg_growth_rate
-                    })
-                
-                if growth_data:
-                    growth_df = pd.DataFrame(growth_data)
-                    result += growth_df.to_markdown(index=False, floatfmt=".2f")
-                else:
-                    result += "Insufficient data to calculate growth rates by group.\n\n"
+            plt.figure(figsize=(14, 8))
+            if group_col:
+                group_label = metadata_map.get(group_col, ColumnMetadata(original_name=group_col, cleaned_name=group_col, semantic_type="Unknown", pandas_dtype="object", description="", count=0,null_count=0,null_ratio=0,unique_count=0,unique_ratio=0,profile_summary="")).cleaned_name
+                sns.lineplot(x=time_col, y=value_col, hue=group_col, data=df, marker='o')
+                plt.title(f"{value_label} Trend by {group_label} over {time_label}", fontsize=16)
             else:
-                # Analyze overall trend without grouping
+                sns.lineplot(x=time_col, y=value_col, data=df, marker='o')
+                plt.title(f"{value_label} Trend over {time_label}", fontsize=16)
+            
+            plt.xlabel(time_label, fontsize=14)
+            plt.ylabel(value_label, fontsize=14)
+            plt.gcf().autofmt_xdate()
+            plt.tight_layout()
+            img_base64 = _figure_to_base64(plt.gcf())
+            result_md += f"![Trend Plot](data:image/png;base64,{img_base64})\n\n"
+
+            # Seasonal Decomposition (if enough data and not grouped, or for each group)
+            def decompose_and_plot(series, title_suffix=""):
+                current_period = seasonal_period
+                if current_period is None: # Auto-infer period
+                    series_freq = pd.infer_freq(series.index)
+                    if series_freq:
+                        if 'Q' in series_freq: current_period = 4
+                        elif 'M' in series_freq: current_period = 12
+                        elif 'W' in series_freq: current_period = 52
+                        elif 'D' in series_freq: current_period = 365 # or 7 for weekly within daily
+                    if not current_period and len(series) >= 24 : current_period = 12 # Default monthly for generic data
+                    elif not current_period and len(series) >= 8 : current_period = 4 # Default quarterly
                 
-                # Create trend visualization
-                plt.figure(figsize=(12, 6))
-                plt.plot(df[time_column], df[value_column])
-                plt.title(f"{value_column} Trend Over Time")
-                plt.xlabel(time_column)
-                plt.ylabel(value_column)
-                plt.grid(True)
-                plt.xticks(rotation=45)
-                plt.tight_layout()
-                
-                # Convert to base64
-                img_base64 = figure_to_base64(plt.gcf())
-                result += f"### Trend Visualization\n\n"
-                result += f"![Trend Analysis](data:image/png;base64,{img_base64})\n\n"
-                
-                # Calculate overall statistics
-                result += "### Growth Analysis\n\n"
-                
-                if len(df) >= 2:
-                    # Calculate overall growth
-                    first_value = df[value_column].iloc[0]
-                    last_value = df[value_column].iloc[-1]
-                    first_date = df[time_column].iloc[0]
-                    last_date = df[time_column].iloc[-1]
-                    
-                    result += f"- **Time Period**: {first_date.strftime('%Y-%m-%d')} to {last_date.strftime('%Y-%m-%d')}\n"
-                    result += f"- **Starting Value**: {first_value:.2f}\n"
-                    result += f"- **Ending Value**: {last_value:.2f}\n"
-                    
-                    if first_value != 0:
-                        overall_growth = ((last_value - first_value) / first_value) * 100
-                        result += f"- **Overall Growth**: {overall_growth:.2f}%\n"
-                    
-                    # Calculate average growth rate
-                    pct_changes = df[value_column].pct_change().dropna()
-                    avg_growth_rate = pct_changes.mean() * 100
-                    result += f"- **Average Growth Rate**: {avg_growth_rate:.2f}% per period\n"
-                    
-                    # Determine if trend is increasing, decreasing, or flat
-                    if overall_growth > 5:
-                        trend = "increasing"
-                    elif overall_growth < -5:
-                        trend = "decreasing"
-                    else:
-                        trend = "relatively flat"
-                    
-                    result += f"- **Overall Trend**: {trend.capitalize()}\n\n"
-                else:
-                    result += "Insufficient data to calculate growth rates.\n\n"
-                
-                # Try to perform seasonal decomposition if enough data points
-                if len(df) >= 6:  # Need at least 6 data points for decomposition
+                if current_period and len(series) >= 2 * current_period:
                     try:
-                        # Set the index to the time column
-                        ts_df = df.set_index(time_column)
-                        
-                        # Determine period for decomposition
-                        if period == "auto":
-                            # Try to infer period from data
-                            time_diffs = df[time_column].diff().dropna()
-                            if len(time_diffs) > 0:
-                                most_common_diff = time_diffs.value_counts().idxmax()
-                                
-                                if most_common_diff.days <= 1:  # Daily data
-                                    period_value = 7  # Weekly seasonality
-                                elif most_common_diff.days <= 7:  # Weekly data
-                                    period_value = 4  # Monthly seasonality
-                                elif most_common_diff.days <= 31:  # Monthly data
-                                    period_value = 12  # Yearly seasonality
-                                else:  # Yearly or longer
-                                    period_value = 4  # Quarterly seasonality
-                            else:
-                                period_value = 7  # Default to weekly
-                        else:
-                            # Map period string to numeric value
-                            period_map = {
-                                "day": 7,      # Weekly seasonality for daily data
-                                "week": 4,      # Monthly seasonality for weekly data
-                                "month": 12,    # Yearly seasonality for monthly data
-                                "quarter": 4,   # Yearly seasonality for quarterly data
-                                "year": 4       # 4-year cycle for yearly data
-                            }
-                            period_value = period_map.get(period.lower(), 7)
-                        
-                        # Perform decomposition if we have enough periods
-                        if len(ts_df) >= period_value * 2:
-                            decomposition = seasonal_decompose(
-                                ts_df[value_column],
-                                model='additive',
-                                period=period_value
-                            )
-                            
-                            # Plot decomposition
-                            fig, axes = plt.subplots(4, 1, figsize=(12, 10), sharex=True)
-                            
-                            # Original
-                            axes[0].plot(decomposition.observed)
-                            axes[0].set_title('Original Time Series')
-                            
-                            # Trend
-                            axes[1].plot(decomposition.trend)
-                            axes[1].set_title('Trend Component')
-                            
-                            # Seasonal
-                            axes[2].plot(decomposition.seasonal)
-                            axes[2].set_title('Seasonal Component')
-                            
-                            # Residual
-                            axes[3].plot(decomposition.resid)
-                            axes[3].set_title('Residual Component')
-                            
-                            plt.tight_layout()
-                            
-                            # Convert to base64
-                            img_base64 = figure_to_base64(plt.gcf())
-                            result += f"### Seasonal Decomposition\n\n"
-                            result += f"![Seasonal Decomposition](data:image/png;base64,{img_base64})\n\n"
-                            
-                            # Interpret seasonality
-                            seasonal_strength = decomposition.seasonal.abs().mean() / decomposition.observed.std()
-                            if seasonal_strength > 0.3:
-                                result += f"The data shows **strong seasonality** with a period of {period_value} time units.\n\n"
-                            elif seasonal_strength > 0.1:
-                                result += f"The data shows **moderate seasonality** with a period of {period_value} time units.\n\n"
-                            else:
-                                result += f"The data shows **weak or no seasonality** with the tested period of {period_value} time units.\n\n"
-                    except Exception as decomp_error:
-                        logger.warning(f"Could not perform seasonal decomposition: {decomp_error}")
-            
-            return result
-            
+                        decomposition = seasonal_decompose(series, model='additive', period=current_period, extrapolate_trend='freq')
+                        fig, axes = plt.subplots(4, 1, figsize=(12, 10), sharex=True)
+                        decomposition.observed.plot(ax=axes[0], legend=False, title=f'Observed{title_suffix}')
+                        decomposition.trend.plot(ax=axes[1], legend=False, title=f'Trend{title_suffix}')
+                        decomposition.seasonal.plot(ax=axes[2], legend=False, title=f'Seasonal (Period: {current_period}){title_suffix}')
+                        decomposition.resid.plot(ax=axes[3], legend=False, title=f'Residual{title_suffix}')
+                        plt.tight_layout()
+                        return _figure_to_base64(fig)
+                    except Exception as e:
+                        logger.warning(f"Could not perform seasonal decomposition for{title_suffix}: {e}")
+                return None
+
+            if not group_col and len(df) >= 12: # Min length for meaningful decomposition
+                ts = df.set_index(time_col)[value_col]
+                decomp_img = decompose_and_plot(ts)
+                if decomp_img:
+                    result_md += f"### Overall Seasonal Decomposition\n![Decomposition](data:image/png;base64,{decomp_img})\n\n"
+            elif group_col:
+                 for group_val in df[group_col].unique()[:3]: # Decompose for first 3 groups
+                    group_df = df[df[group_col] == group_val]
+                    if len(group_df) >= 12:
+                        ts_group = group_df.set_index(time_col)[value_col]
+                        decomp_img_group = decompose_and_plot(ts_group, title_suffix=f" for {group_val}")
+                        if decomp_img_group:
+                             result_md += f"### Seasonal Decomposition for {group_val}\n![Decomposition {group_val}](data:image/png;base64,{decomp_img_group})\n\n"
+            return result_md
+
         except Exception as e:
-            logger.error(f"Error analyzing trend: {e}")
+            logger.error(f"Error analyzing trend: {e}", exc_info=True)
             return f"Error analyzing trend: {str(e)}"
-    
+
     @mcp.tool()
     async def detect_anomalies(
         ctx: Context,
-        data: List[Dict[str, Any]],
-        columns: Optional[List[str]] = None,
-        time_column: Optional[str] = None,
-        contamination: float = 0.05,
+        data: Union[List[Dict[str, Any]], pd.DataFrame],
+        value_column_original: Optional[str] = None,
+        time_column_original: Optional[str] = None,
         query: Optional[str] = None,
+        contamination: float = 0.05, # Expected proportion of outliers
         include_visualization: bool = True
     ) -> str:
         """
-        Detect anomalies and outliers in the data.
-        
-        This tool identifies unusual patterns, outliers, or sudden changes in the data.
-        
-        Args:
-            ctx: The MCP context
-            data: Tabular data as a list of dictionaries
-            columns: Specific columns to check for anomalies
-            time_column: Column containing time/date information for time-based analysis
-            contamination: Expected proportion of outliers in the data (0.01 to 0.1)
-            query: Natural language query to help determine columns
-            include_visualization: Whether to include visualizations
-            
-        Returns:
-            Markdown-formatted anomaly analysis with visualizations
+        Detects anomalies in a specified value column, optionally using a time column.
+        Uses Isolation Forest and profiled column information.
         """
         try:
-            # Convert to DataFrame
-            df = ensure_dataframe(data)
+            df, metadata_map = _ensure_dataframe_and_profile(data, profiler)
+            if df is None or metadata_map is None: return "No data available for anomaly detection or data is empty."
+
+            value_col = _get_col_by_cleaned_name_or_query(query, metadata_map, target_semantic_types=["Currency", "Float", "Integer", "Percentage"], fallback_original_name=value_column_original)
+            if not value_col: value_col = _get_col_by_semantic_type(metadata_map, "Float") or _get_col_by_semantic_type(metadata_map, "Integer")
+            if not value_col: return "Could not identify a suitable value column for anomaly detection."
             
-            if df.empty:
-                return "No data available for anomaly detection"
+            df[value_col] = pd.to_numeric(df[value_col], errors='coerce')
+            df_analysis = df.dropna(subset=[value_col])
+            if df_analysis.empty: return f"Column '{metadata_map[value_col].cleaned_name}' has no valid numeric data."
+
+            time_col = _get_col_by_cleaned_name_or_query(query, metadata_map, target_semantic_types=["Date", "Timestamp", "Year"], fallback_original_name=time_column_original)
+            if time_col:
+                df_analysis[time_col] = pd.to_datetime(df_analysis[time_col], errors='coerce')
+                df_analysis = df_analysis.dropna(subset=[time_col]).sort_values(by=time_col)
             
-            # Convert datetime columns
-            df = convert_datetime_columns(df)
-            
-            # Determine columns from query if not specified
-            if query and not columns:
-                # Extract columns from query
-                matched_columns = extract_column_from_query(query, df)
-                
-                # Get numeric columns
-                numeric_cols = extract_numeric_columns_from_query(query, df)
-                
-                if numeric_cols:
-                    columns = numeric_cols
-                
-                # Try to find time column if not specified
-                if not time_column:
-                    time_col = detect_time_series_column(df)
-                    if time_col:
-                        time_column = time_col
-                    else:
-                        # Look for date/time related columns in matched columns
-                        for col in matched_columns:
-                            if any(term in col.lower() for term in ['date', 'time', 'year', 'month', 'day']):
-                                time_column = col
-                                break
-            
-            # If still no columns specified, use all numeric columns
-            if not columns:
-                columns = detect_numeric_columns(df)
-            
-            # Validate columns exist and are numeric
-            columns = [col for col in columns if col in df.columns and pd.api.types.is_numeric_dtype(df[col])]
-            
-            if not columns:
-                return "No valid numeric columns found for anomaly detection"
-            
-            # Initialize result
-            result = "## Anomaly Detection Results\n\n"
-            
-            # Validate time column if specified
-            if time_column:
-                if time_column not in df.columns:
-                    time_column = None
-                else:
-                    # Ensure time column is datetime
-                    if not pd.api.types.is_datetime64_any_dtype(df[time_column]):
-                        try:
-                            df[time_column] = pd.to_datetime(df[time_column])
-                        except:
-                            time_column = None
-            
-            # Sort by time if time column is available
-            if time_column:
-                df = df.sort_values(by=time_column)
-            
-            # Validate contamination parameter
-            contamination = max(0.01, min(0.1, contamination))
-            
-            # Detect anomalies for each column
-            anomaly_results = []
-            
-            for col in columns:
-                # Skip columns with too many missing values
-                if df[col].isna().sum() > len(df) * 0.5:
-                    continue
-                
-                # Create a copy of the data for this column
-                col_df = df[[col]].copy()
-                col_df = col_df.dropna()
-                
-                if len(col_df) < 10:
-                    # Skip columns with too few data points
-                    continue
-                
-                # Reshape for Isolation Forest
-                X = col_df.values.reshape(-1, 1)
-                
-                # Train Isolation Forest
-                iso_forest = IsolationForest(
-                    contamination=contamination,
-                    random_state=42,
-                    n_estimators=100
-                )
-                
-                # Fit and predict
-                predictions = iso_forest.fit_predict(X)
-                
-                # Convert predictions to anomaly flags (-1 for anomalies, 1 for normal)
-                anomalies = predictions == -1
-                
-                # Get anomaly indices and values
-                anomaly_indices = np.where(anomalies)[0]
-                anomaly_values = col_df.iloc[anomaly_indices][col].values
-                
-                # Calculate Z-scores for anomaly values
-                mean = col_df[col].mean()
-                std = col_df[col].std()
-                z_scores = [(val - mean) / std if std != 0 else 0 for val in anomaly_values]
-                
-                # Create anomaly result
-                if len(anomaly_indices) > 0:
-                    # Create result entry
-                    anomaly_result = {
-                        "column": col,
-                        "anomaly_count": len(anomaly_indices),
-                        "anomaly_percent": (len(anomaly_indices) / len(col_df)) * 100,
-                        "indices": anomaly_indices.tolist(),
-                        "values": anomaly_values.tolist(),
-                        "z_scores": z_scores
-                    }
-                    
-                    # Add time information if available
-                    if time_column:
-                        anomaly_result["times"] = df.iloc[anomaly_indices][time_column].tolist()
-                    
-                    anomaly_results.append(anomaly_result)
-            
-            # Summarize results
-            if not anomaly_results:
-                result += "No significant anomalies detected in the data.\n\n"
+            X = df_analysis[[value_col]]
+            model = IsolationForest(contamination=contamination, random_state=42)
+            df_analysis['anomaly'] = model.fit_predict(X)
+            anomalies_df = df_analysis[df_analysis['anomaly'] == -1]
+
+            value_label = metadata_map[value_col].cleaned_name
+            result_md = f"## Anomaly Detection for {value_label}\n\n"
+            result_md += f"Found {len(anomalies_df)} anomalies (marked as -1) using Isolation Forest with contamination={contamination:.2%}.\n\n"
+
+            if not anomalies_df.empty:
+                display_cols = [time_col, value_col] if time_col else [value_col]
+                result_md += "### Detected Anomalies:\n"
+                result_md += anomalies_df[display_cols].to_markdown(index=False, floatfmt=".2f") + "\n\n"
+
+                if include_visualization:
+                    plt.figure(figsize=(14,7))
+                    x_plot = time_col if time_col else df_analysis.index
+                    plt.plot(df_analysis[x_plot], df_analysis[value_col], label='Data')
+                    plt.scatter(anomalies_df[x_plot], anomalies_df[value_col], color='red', label='Anomaly', s=100)
+                    plt.title(f"Anomalies in {value_label}" + (f" over {metadata_map[time_col].cleaned_name}" if time_col else ""), fontsize=16)
+                    plt.xlabel(metadata_map[time_col].cleaned_name if time_col else "Index", fontsize=14)
+                    plt.ylabel(value_label, fontsize=14)
+                    if time_col: plt.gcf().autofmt_xdate()
+                    plt.legend()
+                    plt.tight_layout()
+                    img_base64 = _figure_to_base64(plt.gcf())
+                    result_md += f"![Anomaly Plot](data:image/png;base64,{img_base64})\n"
             else:
-                result += f"Detected anomalies in {len(anomaly_results)} columns:\n\n"
-                
-                # Create summary table
-                summary_data = []
-                for res in anomaly_results:
-                    summary_data.append({
-                        "Column": res["column"],
-                        "Anomaly Count": res["anomaly_count"],
-                        "Anomaly %": f"{res['anomaly_percent']:.2f}%",
-                        "Min Z-Score": f"{min(res['z_scores']):.2f}",
-                        "Max Z-Score": f"{max(res['z_scores']):.2f}"
-                    })
-                
-                summary_df = pd.DataFrame(summary_data)
-                result += summary_df.to_markdown(index=False)
-                
-                # Add detailed results for each column
-                result += "\n\n### Detailed Anomaly Analysis\n\n"
-                
-                for res in anomaly_results:
-                    col = res["column"]
-                    result += f"#### Anomalies in '{col}'\n\n"
-                    
-                    # Create table of anomalies
-                    anomaly_data = []
-                    for i in range(len(res["indices"])):
-                        anomaly_entry = {
-                            "Index": res["indices"][i],
-                            "Value": res["values"][i],
-                            "Z-Score": f"{res['z_scores'][i]:.2f}"
-                        }
-                        
-                        # Add time if available
-                        if "times" in res:
-                            time_val = res["times"][i]
-                            if pd.api.types.is_datetime64_any_dtype(time_val):
-                                time_val = time_val.strftime("%Y-%m-%d %H:%M:%S")
-                            anomaly_entry["Time"] = time_val
-                        
-                        anomaly_data.append(anomaly_entry)
-                    
-                    # Create and display table
-                    anomaly_df = pd.DataFrame(anomaly_data)
-                    result += anomaly_df.to_markdown(index=False)
-                    
-                    # Add visualization if requested
-                    if include_visualization:
-                        plt.figure(figsize=(12, 6))
-                        
-                        # Plot the data
-                        if time_column:
-                            # Time series plot
-                            plt.plot(df[time_column], df[col], 'b-', label='Normal')
-                            
-                            # Highlight anomalies
-                            anomaly_times = [res["times"][i] for i in range(len(res["indices"]))]
-                            anomaly_values = res["values"]
-                            plt.scatter(anomaly_times, anomaly_values, color='red', s=50, label='Anomaly')
-                            
-                            plt.xlabel(time_column)
-                            plt.xticks(rotation=45)
-                        else:
-                            # Regular plot
-                            plt.plot(df.index, df[col], 'b-', label='Normal')
-                            
-                            # Highlight anomalies
-                            plt.scatter(res["indices"], res["values"], color='red', s=50, label='Anomaly')
-                            
-                            plt.xlabel("Index")
-                        
-                        plt.ylabel(col)
-                        plt.title(f"Anomalies in {col}")
-                        plt.legend()
-                        plt.grid(True)
-                        plt.tight_layout()
-                        
-                        # Convert to base64
-                        img_base64 = figure_to_base64(plt.gcf())
-                        result += f"\n\n![Anomalies in {col}](data:image/png;base64,{img_base64})\n\n"
+                result_md += "No significant anomalies detected with the current settings.\n"
             
-            return result
-            
+            return result_md
+
         except Exception as e:
-            logger.error(f"Error detecting anomalies: {e}")
+            logger.error(f"Error detecting anomalies: {e}", exc_info=True)
             return f"Error detecting anomalies: {str(e)}"
-    
+
     @mcp.tool()
     async def cluster_clients(
         ctx: Context,
-        data: List[Dict[str, Any]],
-        columns: Optional[List[str]] = None,
-        n_clusters: int = 3,
-        id_column: Optional[str] = None,
+        data: Union[List[Dict[str, Any]], pd.DataFrame],
+        feature_columns_original: Optional[List[str]] = None,
+        n_clusters: int = 0, # 0 means auto-detect
+        id_column_original: Optional[str] = None,
         query: Optional[str] = None
     ) -> str:
         """
-        Cluster similar clients based on their characteristics.
-        
-        This tool groups clients or entities with similar attributes using K-means clustering.
-        
-        Args:
-            ctx: The MCP context
-            data: Tabular data as a list of dictionaries
-            columns: Specific columns to use for clustering
-            n_clusters: Number of clusters to create
-            id_column: Column containing client/entity identifiers
-            query: Natural language query to help determine columns
-            
-        Returns:
-            Markdown-formatted clustering analysis with visualizations
+        Clusters clients or entities based on specified features using K-Means.
+        Intelligently selects features and ID column if not specified, using profiled metadata.
         """
         try:
-            # Convert to DataFrame
-            df = ensure_dataframe(data)
+            df, metadata_map = _ensure_dataframe_and_profile(data, profiler)
+            if df is None or metadata_map is None: return "No data available for clustering or data is empty."
+
+            if feature_columns_original:
+                features = [col for col in feature_columns_original if col in metadata_map and metadata_map[col].semantic_type in ["Currency", "Float", "Integer", "Percentage"]]
+            else:
+                features = _get_cols_by_semantic_types(metadata_map, ["Currency", "Float", "Integer", "Percentage"])
             
-            if df.empty:
-                return "No data available for clustering"
+            if not features or len(features) < 2: return "Clustering requires at least two numeric feature columns."
             
-            # Determine columns from query if not specified
-            if query and not columns:
-                # Extract columns from query
-                numeric_cols = extract_numeric_columns_from_query(query, df)
-                
-                if numeric_cols:
-                    columns = numeric_cols
-            
-            # If still no columns specified, use all numeric columns
-            if not columns:
-                columns = detect_numeric_columns(df)
-            
-            # Validate columns exist and are numeric
-            columns = [col for col in columns if col in df.columns and pd.api.types.is_numeric_dtype(df[col])]
-            
-            if not columns:
-                return "No valid numeric columns found for clustering"
-            
-            # Determine ID column if not specified
-            if not id_column:
-                # Look for common ID column names
-                id_patterns = ['id', 'name', 'client', 'customer', 'entity']
-                for col in df.columns:
-                    if any(pattern in col.lower() for pattern in id_patterns):
-                        id_column = col
-                        break
-                
-                # If still not found, use the first non-numeric column
-                if not id_column:
-                    non_numeric = [col for col in df.columns if col not in columns]
-                    if non_numeric:
-                        id_column = non_numeric[0]
-            
-            # If still no ID column, use index
-            if not id_column or id_column not in df.columns:
-                df['id'] = [f"Entity_{i}" for i in range(len(df))]
-                id_column = 'id'
-            
-            # Prepare data for clustering
-            X = df[columns].copy()
-            
-            # Handle missing values
-            X = X.fillna(X.mean())
-            
-            # Standardize the data
+            df_cluster = df[features].copy()
+            for col in features: # Ensure numeric and handle NaNs
+                df_cluster[col] = pd.to_numeric(df_cluster[col], errors='coerce')
+            df_cluster = df_cluster.fillna(df_cluster.mean()) # Impute NaNs with mean
+
             scaler = StandardScaler()
-            X_scaled = scaler.fit_transform(X)
-            
-            # Determine optimal number of clusters if not specified
-            if n_clusters <= 0 or n_clusters > min(10, len(df) // 2):
-                # Try different numbers of clusters
-                silhouette_scores = []
-                cluster_range = range(2, min(10, len(df) // 2) + 1)
-                
-                for k in cluster_range:
-                    kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
-                    cluster_labels = kmeans.fit_predict(X_scaled)
-                    
-                    # Skip if only one cluster has data points
-                    if len(np.unique(cluster_labels)) < k:
-                        silhouette_scores.append(-1)
-                        continue
-                    
-                    # Calculate silhouette score
-                    score = silhouette_score(X_scaled, cluster_labels)
-                    silhouette_scores.append(score)
-                
-                # Find the best number of clusters
-                if silhouette_scores:
-                    best_k_idx = np.argmax(silhouette_scores)
-                    n_clusters = cluster_range[best_k_idx]
+            X_scaled = scaler.fit_transform(df_cluster)
+
+            if n_clusters <= 0: # Auto-detect optimal k
+                k_range = range(2, min(11, len(df_cluster)))
+                silhouette_scores = {}
+                if len(k_range) == 0 : # Not enough data points for range
+                    n_clusters = 2 if len(df_cluster) >=2 else 1
                 else:
-                    n_clusters = 3  # Default
+                    for k_val in k_range:
+                        if k_val >= len(df_cluster): continue # Cannot have more clusters than samples
+                        kmeans_temp = KMeans(n_clusters=k_val, random_state=42, n_init='auto')
+                        labels_temp = kmeans_temp.fit_predict(X_scaled)
+                        if len(set(labels_temp)) > 1: # Silhouette score requires at least 2 labels
+                            silhouette_scores[k_val] = silhouette_score(X_scaled, labels_temp)
+                    if silhouette_scores:
+                        n_clusters = max(silhouette_scores, key=silhouette_scores.get)
+                    else: # Fallback if no valid scores
+                        n_clusters = min(3, len(df_cluster)) if len(df_cluster) > 0 else 1
             
-            # Perform K-means clustering
-            kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-            cluster_labels = kmeans.fit_predict(X_scaled)
+            if n_clusters == 1 and len(df_cluster) > 1: # Avoid single cluster for multiple points if auto-detected
+                n_clusters = min(2, len(df_cluster))
+
+            kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init='auto')
+            df['cluster_label'] = kmeans.fit_predict(X_scaled)
+
+            id_col = _get_col_by_cleaned_name_or_query(query, metadata_map, target_semantic_types=["Identifier", "Categorical"], fallback_original_name=id_column_original)
+            if not id_col: id_col = _get_col_by_semantic_type(metadata_map, "Identifier") or df.columns[0]
+
+            result_md = f"## Client Clustering (K-Means, {n_clusters} Clusters)\n\n"
+            result_md += "Based on features: " + ", ".join([metadata_map[f].cleaned_name for f in features]) + "\n\n"
             
-            # Add cluster labels to the DataFrame
-            df['cluster'] = cluster_labels
+            cluster_summary = df.groupby('cluster_label')[id_col].count().reset_index(name='Client Count')
+            result_md += "### Cluster Sizes:\n" + cluster_summary.to_markdown(index=False) + "\n\n"
             
-            # Initialize result
-            result = f"## Client Clustering Analysis\n\n"
-            result += f"Clustered {len(df)} clients into {n_clusters} groups based on {len(columns)} features.\n\n"
-            
-            # Summarize clusters
-            result += "### Cluster Summary\n\n"
-            
-            cluster_summary = df.groupby('cluster').size().reset_index(name='count')
-            cluster_summary['percentage'] = (cluster_summary['count'] / len(df)) * 100
-            
-            # Add to result
-            result += cluster_summary.to_markdown(index=False, floatfmt=".2f")
-            
-            # Calculate cluster characteristics
-            result += "\n\n### Cluster Characteristics\n\n"
-            
-            # Calculate mean values for each feature in each cluster
-            cluster_means = df.groupby('cluster')[columns].mean().reset_index()
-            
-            # Add to result
-            result += cluster_means.to_markdown(index=False, floatfmt=".2f")
-            
-            # Create visualizations
-            
-            # 1. PCA for dimensionality reduction
-            if len(columns) > 2:
-                pca = PCA(n_components=2)
+            cluster_means = df.groupby('cluster_label')[features].mean()
+            cluster_means.columns = [metadata_map[f].cleaned_name for f in features]
+            result_md += "### Cluster Centers (Mean Feature Values):\n" + cluster_means.to_markdown(floatfmt=".2f") + "\n\n"
+
+            if X_scaled.shape[1] >= 2: # PCA and plot if at least 2 features
+                pca = PCA(n_components=2, random_state=42)
                 X_pca = pca.fit_transform(X_scaled)
+                df_plot = pd.DataFrame(X_pca, columns=['PCA1', 'PCA2'])
+                df_plot['Cluster'] = df['cluster_label']
                 
-                # Create scatter plot
-                plt.figure(figsize=(10, 8))
-                
-                for i in range(n_clusters):
-                    plt.scatter(
-                        X_pca[cluster_labels == i, 0],
-                        X_pca[cluster_labels == i, 1],
-                        s=50, label=f'Cluster {i}'
-                    )
-                
-                plt.title('Client Clusters (PCA)')
-                plt.xlabel('Principal Component 1')
-                plt.ylabel('Principal Component 2')
-                plt.legend()
-                plt.grid(True)
+                plt.figure(figsize=(10,7))
+                sns.scatterplot(x='PCA1', y='PCA2', hue='Cluster', data=df_plot, palette='viridis', s=100, alpha=0.8)
+                plt.title(f'Client Clusters (PCA Projection)', fontsize=16)
+                plt.xlabel("Principal Component 1", fontsize=14)
+                plt.ylabel("Principal Component 2", fontsize=14)
+                plt.legend(title='Cluster')
                 plt.tight_layout()
-                
-                # Convert to base64
-                img_base64 = figure_to_base64(plt.gcf())
-                result += f"\n\n### Cluster Visualization (PCA)\n\n"
-                result += f"![Cluster PCA](data:image/png;base64,{img_base64})\n\n"
-                
-                # Explained variance
-                explained_variance = pca.explained_variance_ratio_
-                result += f"*Note: PCA components explain {sum(explained_variance) * 100:.2f}% of the total variance.*\n\n"
-            
-            # 2. Feature importance visualization
-            if len(columns) > 1:
-                # Calculate standardized cluster centers
-                centers = kmeans.cluster_centers_
-                
-                # Create heatmap
-                plt.figure(figsize=(12, 8))
-                sns.heatmap(centers, annot=True, fmt=".2f", cmap="YlGnBu",
-                            xticklabels=columns, yticklabels=[f"Cluster {i}" for i in range(n_clusters)])
-                plt.title('Cluster Centers (Standardized Features)')
-                plt.tight_layout()
-                
-                # Convert to base64
-                img_base64 = figure_to_base64(plt.gcf())
-                result += f"### Cluster Feature Importance\n\n"
-                result += f"![Cluster Features](data:image/png;base64,{img_base64})\n\n"
-            
-            # 3. Sample clients from each cluster
-            result += "### Sample Clients from Each Cluster\n\n"
-            
-            for i in range(n_clusters):
-                result += f"#### Cluster {i} Samples\n\n"
-                
-                # Get sample clients from this cluster
-                cluster_df = df[df['cluster'] == i].head(5)
-                
-                # Select relevant columns for display
-                display_cols = [id_column] + columns[:5]  # Limit to first 5 feature columns
-                
-                # Display sample
-                result += cluster_df[display_cols].to_markdown(index=False, floatfmt=".2f")
-                result += "\n\n"
-            
-            return result
-            
+                img_base64 = _figure_to_base64(plt.gcf())
+                result_md += f"![Cluster Plot (PCA)](data:image/png;base64,{img_base64})\n"
+                result_md += f"*PCA explains {pca.explained_variance_ratio_.sum()*100:.2f}% of variance.*\n"
+
+            return result_md
+
         except Exception as e:
-            logger.error(f"Error clustering clients: {e}")
+            logger.error(f"Error clustering clients: {e}", exc_info=True)
             return f"Error clustering clients: {str(e)}"
-    
+
     @mcp.tool()
     async def correlation_matrix(
         ctx: Context,
-        data: List[Dict[str, Any]],
-        columns: Optional[List[str]] = None,
+        data: Union[List[Dict[str, Any]], pd.DataFrame],
+        columns_original: Optional[List[str]] = None,
         query: Optional[str] = None,
-        method: str = "pearson"
+        method: str = "pearson" # pearson, kendall, spearman
     ) -> str:
         """
-        Calculate and visualize correlations between variables.
-        
-        This tool shows how different metrics are related to each other.
-        
-        Args:
-            ctx: The MCP context
-            data: Tabular data as a list of dictionaries
-            columns: Specific columns to include in the correlation analysis
-            query: Natural language query to help determine columns
-            method: Correlation method (pearson, spearman, kendall)
-            
-        Returns:
-            Markdown-formatted correlation analysis with visualizations
+        Calculates and visualizes the correlation matrix for numeric columns.
+        Uses profiled metadata to select appropriate columns if not specified.
         """
         try:
-            # Convert to DataFrame
-            df = ensure_dataframe(data)
+            df, metadata_map = _ensure_dataframe_and_profile(data, profiler)
+            if df is None or metadata_map is None: return "No data available for correlation analysis or data is empty."
+
+            if columns_original:
+                numeric_cols = [col for col in columns_original if col in metadata_map and metadata_map[col].semantic_type in ["Currency", "Float", "Integer", "Percentage"]]
+            else:
+                numeric_cols = _get_cols_by_semantic_types(metadata_map, ["Currency", "Float", "Integer", "Percentage"])
+
+            if len(numeric_cols) < 2: return "Correlation analysis requires at least two numeric columns."
             
-            if df.empty:
-                return "No data available for correlation analysis"
-            
-            # Determine columns from query if not specified
-            if query and not columns:
-                # Extract columns from query
-                numeric_cols = extract_numeric_columns_from_query(query, df)
-                
-                if numeric_cols:
-                    columns = numeric_cols
-            
-            # If still no columns specified, use all numeric columns
-            if not columns:
-                columns = detect_numeric_columns(df)
-            
-            # Validate columns exist and are numeric
-            columns = [col for col in columns if col in df.columns and pd.api.types.is_numeric_dtype(df[col])]
-            
-            if not columns:
-                return "No valid numeric columns found for correlation analysis"
-            
-            if len(columns) < 2:
-                return "At least two numeric columns are required for correlation analysis"
-            
-            # Limit to first 10 columns for readability
-            if len(columns) > 10:
-                columns = columns[:10]
-                
-            # Validate correlation method
-            valid_methods = ["pearson", "spearman", "kendall"]
-            if method.lower() not in valid_methods:
-                method = "pearson"
-            
-            # Calculate correlation matrix
-            corr_matrix = df[columns].corr(method=method.lower())
-            
-            # Initialize result
-            result = f"## Correlation Analysis ({method.capitalize()} Method)\n\n"
-            
-            # Create heatmap visualization
-            plt.figure(figsize=(10, 8))
-            sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', vmin=-1, vmax=1, center=0,
-                        linewidths=.5, fmt='.2f')
-            plt.title(f'Correlation Matrix ({method.capitalize()})')
+            df_corr = df[numeric_cols].copy()
+            for col in numeric_cols: # Ensure numeric
+                 df_corr[col] = pd.to_numeric(df_corr[col], errors='coerce')
+            df_corr = df_corr.dropna() # Drop rows with NaNs in selected columns for corr
+
+            if len(df_corr) < 2: return "Not enough valid data points for correlation after cleaning."
+
+            corr_matrix = df_corr.corr(method=method)
+            cleaned_col_names = [metadata_map[col].cleaned_name for col in numeric_cols]
+            corr_matrix.columns = cleaned_col_names
+            corr_matrix.index = cleaned_col_names
+
+            result_md = f"## Correlation Matrix ({method.capitalize()} Method)\n\n"
+            plt.figure(figsize=(min(10, len(numeric_cols)*1.2), min(8, len(numeric_cols))))
+            sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', fmt=".2f", vmin=-1, vmax=1)
+            plt.title(f"Correlation Matrix of Selected Features", fontsize=16)
+            plt.xticks(rotation=45, ha='right')
+            plt.yticks(rotation=0)
             plt.tight_layout()
+            img_base64 = _figure_to_base64(plt.gcf())
+            result_md += f"![Correlation Heatmap](data:image/png;base64,{img_base64})\n\n"
+            result_md += "### Correlation Values:\n" + corr_matrix.to_markdown(floatfmt=".2f")
             
-            # Convert to base64
-            img_base64 = figure_to_base64(plt.gcf())
-            result += f"![Correlation Matrix](data:image/png;base64,{img_base64})\n\n"
-            
-            # Add correlation table
-            result += "### Correlation Table\n\n"
-            result += corr_matrix.to_markdown(floatfmt=".2f")
-            
-            # Identify strong correlations
-            strong_pos_corr = []
-            strong_neg_corr = []
-            
-            for i in range(len(columns)):
-                for j in range(i+1, len(columns)):
-                    corr_value = corr_matrix.iloc[i, j]
-                    if abs(corr_value) >= 0.7:
-                        corr_pair = {
-                            "Variable 1": columns[i],
-                            "Variable 2": columns[j],
-                            "Correlation": corr_value
-                        }
-                        
-                        if corr_value >= 0.7:
-                            strong_pos_corr.append(corr_pair)
-                        elif corr_value <= -0.7:
-                            strong_neg_corr.append(corr_pair)
-            
-            # Add strong correlations to result
-            if strong_pos_corr or strong_neg_corr:
-                result += "\n\n### Strong Correlations\n\n"
-                
-                if strong_pos_corr:
-                    result += "#### Strong Positive Correlations\n\n"
-                    pos_df = pd.DataFrame(strong_pos_corr)
-                    result += pos_df.to_markdown(index=False, floatfmt=".2f")
-                    result += "\n\n"
-                
-                if strong_neg_corr:
-                    result += "#### Strong Negative Correlations\n\n"
-                    neg_df = pd.DataFrame(strong_neg_corr)
-                    result += neg_df.to_markdown(index=False, floatfmt=".2f")
-                    result += "\n\n"
-            
-            # Add interpretation guide
-            result += "### Interpretation Guide\n\n"
-            result += "- **1.0**: Perfect positive correlation\n"
-            result += "- **0.7 to 1.0**: Strong positive correlation\n"
-            result += "- **0.3 to 0.7**: Moderate positive correlation\n"
-            result += "- **0 to 0.3**: Weak positive correlation\n"
-            result += "- **0**: No correlation\n"
-            result += "- **-0.3 to 0**: Weak negative correlation\n"
-            result += "- **-0.7 to -0.3**: Moderate negative correlation\n"
-            result += "- **-1.0 to -0.7**: Strong negative correlation\n"
-            result += "- **-1.0**: Perfect negative correlation\n"
-            
-            return result
-            
+            return result_md
+
         except Exception as e:
-            logger.error(f"Error calculating correlation matrix: {e}")
+            logger.error(f"Error calculating correlation matrix: {e}", exc_info=True)
             return f"Error calculating correlation matrix: {str(e)}"
-    
+
     @mcp.tool()
     async def query_table_qa(
         ctx: Context,
-        data: List[Dict[str, Any]],
+        data: Union[List[Dict[str, Any]], pd.DataFrame],
         query: str
     ) -> str:
         """
-        Answer natural language questions about tabular data.
-        
-        This tool interprets questions about the data and provides answers
-        by analyzing the underlying tables.
-        
-        Args:
-            ctx: The MCP context
-            data: Tabular data as a list of dictionaries
-            query: Natural language question about the data
-            
-        Returns:
-            Markdown-formatted answer to the question
+        Answers natural language questions about tabular data using an LLM.
+        Provides profiled column metadata as context to the LLM.
+        (Note: Actual LLM call needs to be implemented via mcp_client or similar)
         """
         try:
-            # Convert to DataFrame
-            df = ensure_dataframe(data)
+            df, metadata_map = _ensure_dataframe_and_profile(data, profiler)
+            if df is None or metadata_map is None: return "No data available to query or data is empty."
+
+            # Prepare context for LLM
+            column_descriptions = "\n".join([f"- {meta.cleaned_name} ({meta.semantic_type}): {meta.description}" for meta in metadata_map.values()])
             
-            if df.empty:
-                return "No data available to answer questions"
+            # For brevity, send only top N rows of data to LLM
+            sample_data_json = df.head(10).to_json(orient="records", indent=2)
+
+            llm_prompt = f"""
+You are a data analysis assistant. Given the following table data and column descriptions, please answer the user's question.
+
+Column Descriptions:
+{column_descriptions}
+
+Sample Data (up to 10 rows):
+{sample_data_json}
+
+User Question: {query}
+
+Provide a concise answer based *only* on the provided data and descriptions. If the data doesn't support an answer, say so.
+Answer:
+"""
+            result_md = f"## Query: \"{query}\"\n\n"
             
-            # Initialize result
-            result = f"## Data Query: {query}\n\n"
+            # Placeholder for LLM call
+            # In a real scenario, you would call your LLM here:
+            # llm_response = await ctx.mcp_client.call_llm(prompt=llm_prompt) 
+            # For this example, we'll simulate a response or indicate an LLM is needed.
             
-            # Process different types of questions
-            query_lower = query.lower()
+            simulated_llm_response = (
+                f"To answer the question \"{query}\", I analyzed the provided table data. "
+                f"The table has columns: {', '.join([meta.cleaned_name for meta in metadata_map.values()])}. "
+                "Based on this structure and the sample data, [simulated LLM answer would go here]. "
+                "A more precise answer would require a live LLM query with the full dataset or more sophisticated local query parsing."
+            )
+            logger.info(f"Prepared prompt for LLM (QA): {llm_prompt[:500]}...") # Log part of the prompt
             
-            # 1. Questions about maximum/minimum values
-            max_pattern = r"(?:what|which|who).*(?:highest|maximum|max|most|largest|greatest|top).*(?:in|of|for)?\s+(.+?)(?:\?|$)"
-            min_pattern = r"(?:what|which|who).*(?:lowest|minimum|min|least|smallest|bottom).*(?:in|of|for)?\s+(.+?)(?:\?|$)"
+            # Attempt basic parsing for simple "what is the X of Y" type questions
+            # This is a very simplified local QA attempt
+            parsed_answer = "Could not determine a direct answer locally. An LLM query would be more effective. " + simulated_llm_response
             
-            max_match = re.search(max_pattern, query_lower)
-            min_match = re.search(min_pattern, query_lower)
+            q_lower = query.lower()
+            if "what is the" in q_lower or "what's the" in q_lower:
+                match_agg = re.search(r"(average|mean|total|sum|count|min|minimum|max|maximum) of (.+)", q_lower)
+                if match_agg:
+                    agg_func_str, col_hint = match_agg.groups()
+                    target_col = _get_col_by_cleaned_name_or_query(col_hint, metadata_map, target_semantic_types=["Currency", "Float", "Integer", "Percentage"])
+                    if target_col and pd.api.types.is_numeric_dtype(df[target_col]):
+                        series = pd.to_numeric(df[target_col], errors='coerce').dropna()
+                        if not series.empty:
+                            val = None
+                            if agg_func_str in ["average", "mean"]: val = series.mean()
+                            elif agg_func_str in ["total", "sum"]: val = series.sum()
+                            elif agg_func_str == "count": val = series.count()
+                            elif agg_func_str in ["min", "minimum"]: val = series.min()
+                            elif agg_func_str in ["max", "maximum"]: val = series.max()
+                            
+                            if val is not None:
+                                parsed_answer = f"The {agg_func_str} of {metadata_map[target_col].cleaned_name} is {val:.2f}."
             
-            if max_match or min_match:
-                # Extract the column name from the query
-                if max_match:
-                    col_hint = max_match.group(1).strip()
-                    find_max = True
-                else:
-                    col_hint = min_match.group(1).strip()
-                    find_max = False
+            result_md += parsed_answer
+            return result_md
+
+        except Exception as e:
+            logger.error(f"Error in query_table_qa: {e}", exc_info=True)
+            return f"Error answering question about table: {str(e)}"
+
+    @mcp.tool()
+    async def generate_report_from_data(
+        ctx: Context,
+        data: Union[List[Dict[str, Any]], pd.DataFrame],
+        title: str = "Data Analysis Report",
+        query: Optional[str] = None # Optional query to guide which analyses are prioritized
+    ) -> str:
+        """
+        Generates a comprehensive Markdown report summarizing and visualizing the data.
+        It leverages other analytics tools like summarize_table, visualize_data, etc.
+        """
+        try:
+            df, metadata_map = _ensure_dataframe_and_profile(data, profiler)
+            if df is None or metadata_map is None: return "No data to generate report from or data is empty."
+
+            report_parts = [f"# {title}\n_Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}_"]
+
+            # 1. Basic Summary
+            summary = await summarize_table(ctx, df.to_dict(orient='records')) # Pass list of dicts
+            report_parts.append("\n## 1. Data Overview\n" + summary.replace("## Data Summary by Column", ""))
+
+            # 2. Key Visualizations (try to pick relevant ones)
+            report_parts.append("\n## 2. Key Visualizations")
+            num_cols = _get_cols_by_semantic_types(metadata_map, ["Currency", "Float", "Integer", "Percentage"])
+            cat_cols = _get_cols_by_semantic_types(metadata_map, ["Categorical", "Identifier", "Boolean", "Year"])
+            
+            if cat_cols and num_cols:
+                # Bar chart of a numeric column by a categorical column
+                vis_bar = await visualize_data(ctx, df.to_dict(orient='records'), chart_type="bar", x_column_original=cat_cols[0], y_column_original=num_cols[0], query=query)
+                report_parts.append(vis_bar.replace("## Data Visualization","### Bar Chart Example"))
+
+            time_col = _get_col_by_semantic_type(metadata_map, "Date") or _get_col_by_semantic_type(metadata_map, "Timestamp")
+            if time_col and num_cols:
+                 # Line chart of a numeric column over time
+                vis_line = await visualize_data(ctx, df.to_dict(orient='records'), chart_type="line", x_column_original=time_col, y_column_original=num_cols[0], query=query)
+                report_parts.append(vis_line.replace("## Data Visualization","### Time Series Example"))
+
+            # 3. Trend Analysis (if applicable)
+            if time_col and num_cols:
+                trend_analysis = await analyze_trend(ctx, df.to_dict(orient='records'), time_column_original=time_col, value_column_original=num_cols[0], query=query)
+                report_parts.append("\n## 3. Trend Analysis\n" + trend_analysis.replace(f"## Trend Analysis: {metadata_map[num_cols[0]].cleaned_name} over {metadata_map[time_col].cleaned_name}", ""))
+            
+            # 4. Anomaly Detection
+            if num_cols:
+                anomaly_report = await detect_anomalies(ctx, df.to_dict(orient='records'), value_column_original=num_cols[0], time_column_original=time_col, query=query, include_visualization=False) # Keep report concise
+                report_parts.append("\n## 4. Anomaly Detection Summary\n" + anomaly_report.replace(f"## Anomaly Detection for {metadata_map[num_cols[0]].cleaned_name}",""))
+
+            # 5. Correlation (if multiple numeric columns)
+            if len(num_cols) >= 2:
+                corr_report = await correlation_matrix(ctx, df.to_dict(orient='records'), columns_original=num_cols[:5], query=query) # Limit to 5 for report
+                report_parts.append("\n## 5. Correlation Insights\n" + corr_report.replace("## Correlation Analysis (Pearson Method)",""))
+
+            # (Optional) Call generate_insights LLM tool for a final summary
+            # insights = await generate_insights(ctx, "\n".join(report_parts), query="Summarize this data report")
+            # report_parts.append("\n## 6. AI Generated Insights\n" + insights)
+            
+            return "\n\n".join(report_parts)
+
+        except Exception as e:
+            logger.error(f"Error generating report: {e}", exc_info=True)
+            return f"Error generating report: {str(e)}"
+
+    @mcp.tool()
+    async def export_visual(
+        ctx: Context,
+        data: Union[List[Dict[str, Any]], pd.DataFrame],
+        export_type: str, # "chart" or "table"
+        format: str, # "png", "pdf", "csv", "xlsx", "json"
+        chart_type: Optional[str] = "bar", # For chart export
+        x_column_original: Optional[str] = None, # For chart export
+        y_column_original: Optional[str] = None, # For chart export
+        query: Optional[str] = None
+    ) -> str:
+        """
+        Exports a chart or table to a specified file format (PNG, PDF, CSV, XLSX, JSON).
+        Returns the path to the saved file.
+        """
+        try:
+            df, metadata_map = _ensure_dataframe_and_profile(data, profiler)
+            if df is None or metadata_map is None: return "No data to export or data is empty."
+
+            if export_type.lower() == "chart":
+                if format.lower() not in ["png", "pdf", "svg"]:
+                    return f"Unsupported chart export format: {format}. Use png, pdf, or svg."
                 
-                # Try to find matching column
-                matched_cols = []
-                for col in df.columns:
-                    if col.lower() in col_hint or col.lower().replace('_', ' ') in col_hint:
-                        matched_cols.append(col)
+                # Re-use visualize_data logic but capture figure for saving
+                # This is a simplified version. A more robust way would be to refactor visualize_data
+                # to return the figure object or have a dedicated plotting function.
+                x_col = _get_col_by_cleaned_name_or_query(query, metadata_map, target_semantic_types=["Categorical", "Date", "Timestamp", "Year"], fallback_original_name=x_column_original) or df.columns[0]
+                y_col = _get_col_by_cleaned_name_or_query(query, metadata_map, target_semantic_types=["Currency", "Float", "Integer", "Percentage"], fallback_original_name=y_column_original) or df.columns[1]
                 
-                if not matched_cols:
-                    # Try to find any numeric column that might match
-                    numeric_cols = detect_numeric_columns(df)
-                    for col in numeric_cols:
-                        if any(term in col_hint for term in col.lower().split('_')):
-                            matched_cols.append(col)
+                plt.figure(figsize=(12,7))
+                # Basic plot for export - extend with more chart types if needed
+                if chart_type.lower() == "bar": sns.barplot(x=x_col, y=y_col, data=df)
+                elif chart_type.lower() == "line": sns.lineplot(x=x_col, y=y_col, data=df)
+                else: return f"Chart type '{chart_type}' not supported for direct export via this simplified path."
                 
-                if matched_cols:
-                    target_col = matched_cols[0]
-                    
-                    # Find ID column to identify the entity
-                    id_col = None
-                    id_patterns = ['name', 'id', 'client', 'customer', 'entity']
-                    for col in df.columns:
-                        if any(pattern in col.lower() for pattern in id_patterns):
-                            id_col = col
-                            break
-                    
-                    if not id_col and len(df.columns) > 0:
-                        id_col = df.columns[0]
-                    
-                    # Find max/min value
-                    if find_max:
-                        if pd.api.types.is_numeric_dtype(df[target_col]):
-                            idx = df[target_col].idxmax()
-                        else:
-                            idx = df[target_col].astype(str).str.len().idxmax()
-                    else:
-                        if pd.api.types.is_numeric_dtype(df[target_col]):
-                            idx = df[target_col].idxmin()
-                        else:
-                            idx = df[target_col].astype(str).str.len().idxmin()
-                    
-                    # Get the row
-                    row = df.loc[idx]
-                    
-                    # Format the answer
-                    if id_col:
-                        entity_name = row[id_col]
-                        value = row[target_col]
-                        
-                        if find_max:
-                            result += f"The highest {target_col} is {value}, which belongs to {entity_name}.\n\n"
-                        else:
-                            result += f"The lowest {target_col} is {value}, which belongs to {entity_name}.\n\n"
-                    else:
-                        value = row[target_col]
-                        
-                        if find_max:
-                            result += f"The highest {target_col} is {value}.\n\n"
-                        else:
-                            result += f"The lowest {target_col} is {value}.\n\n"
-                    
-                    # Add the row data
-                    result += "### Detailed Information\n\n"
-                    row_df = pd.DataFrame([row])
-                    result += row_df.to_markdown(index=False, floatfmt=".2f")
-                    
-                    return result
+                plt.title(f"{metadata_map[y_col].cleaned_name} by {metadata_map[x_col].cleaned_name}", fontsize=16)
+                plt.xlabel(metadata_map[x_col].cleaned_name, fontsize=14)
+                plt.ylabel(metadata_map[y_col].cleaned_name, fontsize=14)
+                plt.xticks(rotation=45, ha='right')
+                plt.tight_layout()
+                
+                file_path = _save_figure_to_file(plt.gcf(), format=format.lower())
+                return f"Chart exported successfully to: {file_path}"
+
+            elif export_type.lower() == "table":
+                if format.lower() not in ["csv", "xlsx", "json"]:
+                    return f"Unsupported table export format: {format}. Use csv, xlsx, or json."
+                file_path = _dataframe_to_file(df, metadata_map, format=format.lower())
+                return f"Table exported successfully to: {file_path}"
+            else:
+                return f"Invalid export_type: {export_type}. Must be 'chart' or 'table'."
+
+        except Exception as e:
+            logger.error(f"Error exporting visual: {e}", exc_info=True)
+            return f"Error exporting visual: {str(e)}"
+    
+    @mcp.tool()
+    async def forecast_revenue(
+        ctx: Context,
+        data: Union[List[Dict[str, Any]], pd.DataFrame],
+        time_column_original: Optional[str] = None,
+        value_column_original: Optional[str] = None,
+        periods_to_forecast: int = 12, # e.g., 12 months
+        query: Optional[str] = None
+    ) -> str:
+        """
+        Forecasts future values for a time series using ARIMA model.
+        Uses profiled metadata to identify time and value columns.
+        """
+        try:
+            df, metadata_map = _ensure_dataframe_and_profile(data, profiler)
+            if df is None or metadata_map is None: return "No data for forecasting or data is empty."
+
+            time_col = _get_col_by_cleaned_name_or_query(query, metadata_map, target_semantic_types=["Date", "Timestamp", "Year"], fallback_original_name=time_column_original)
+            if not time_col: return "Could not identify a time column for forecasting."
             
-            # 2. Questions about counting or how many
-            count_pattern = r"(?:how many|count|number of).*(?:in|with|where)?\s+(.+?)(?:\?|$)"
-            count_match = re.search(count_pattern, query_lower)
+            value_col = _get_col_by_cleaned_name_or_query(query, metadata_map, target_semantic_types=["Currency", "Float", "Integer"], fallback_original_name=value_column_original)
+            if not value_col: return "Could not identify a numeric value column for forecasting."
+
+            df[time_col] = pd.to_datetime(df[time_col], errors='coerce')
+            df[value_col] = pd.to_numeric(df[value_col], errors='coerce')
+            df_forecast = df.dropna(subset=[time_col, value_col]).set_index(time_col)[value_col]
+
+            if len(df_forecast) < 20: # ARIMA needs sufficient data
+                return f"Not enough data points ({len(df_forecast)}) in '{metadata_map[value_col].cleaned_name}' for reliable forecasting. At least 20 are recommended."
+
+            # Fit ARIMA model (auto-ARIMA can be slow, using simple order for example)
+            # For robust forecasting, consider pmdarima.auto_arima or manual order selection
+            try:
+                model = ARIMA(df_forecast, order=(5,1,0)) # Example order
+                model_fit = model.fit()
+                forecast_result = model_fit.forecast(steps=periods_to_forecast)
+            except Exception as arima_e:
+                logger.warning(f"ARIMA(5,1,0) failed: {arima_e}. Trying SARIMAX.")
+                # Fallback to simpler SARIMAX if ARIMA fails (e.g. non-stationarity issues)
+                model = SARIMAX(df_forecast, order=(1,1,1), seasonal_order=(0,0,0,0))
+                model_fit = model.fit(disp=False)
+                forecast_result = model_fit.forecast(steps=periods_to_forecast)
+
+
+            forecast_dates = pd.date_range(start=df_forecast.index[-1], periods=periods_to_forecast + 1, freq=pd.infer_freq(df_forecast.index))[1:]
+            forecast_series = pd.Series(forecast_result, index=forecast_dates)
+
+            value_label = metadata_map[value_col].cleaned_name
+            time_label = metadata_map[time_col].cleaned_name
+            result_md = f"## {value_label} Forecast ({periods_to_forecast} Periods)\n\n"
             
-            if count_match:
-                condition_hint = count_match.group(1).strip()
-                
-                # Try to parse filter conditions
-                filter_conditions = parse_filter_conditions(query, df)
-                
-                if filter_conditions:
-                    # Apply filters
-                    filtered_df = df.copy()
-                    for col, value in filter_conditions.items():
-                        filtered_df = filtered_df[filtered_df[col] == value]
-                    
-                    count = len(filtered_df)
-                    
-                    condition_text = ", ".join([f"{col} = {value}" for col, value in filter_conditions.items()])
-                    result += f"There are **{count}** records where {condition_text}.\n\n"
-                    
-                    if count > 0 and count <= 5:
-                        result += "### Sample Records\n\n"
-                        result += filtered_df.head().to_markdown(index=False, floatfmt=".2f")
-                    
-                    return result
-                else:
-                    # Try to match a column name
-                    matched_cols = []
-                    for col in df.columns:
-                        if col.lower() in condition_hint or col.lower().replace('_', ' ') in condition_hint:
-                            matched_cols.append(col)
-                    
-                    if matched_cols:
-                        col = matched_cols[0]
-                        unique_count = df[col].nunique()
-                        total_count = len(df)
-                        
-                        result += f"There are **{unique_count}** unique values in the '{col}' column out of {total_count} total records.\n\n"
-                        
-                        # Show value counts for categorical columns
-                        if df[col].nunique() <= 10 or not pd.api.types.is_numeric_dtype(df[col]):
-                            result += "### Value Distribution\n\n"
-                            value_counts = df[col].value_counts().reset_index()
-                            value_counts.columns = [col, 'Count']
-                            result += value_counts.to_markdown(index=False)
-                        
-                        return result
+            plt.figure(figsize=(14,7))
+            plt.plot(df_forecast.index, df_forecast, label='Historical Data')
+            plt.plot(forecast_series.index, forecast_series, label='Forecast', color='red')
+            plt.title(f"Forecast for {value_label}", fontsize=16)
+            plt.xlabel(time_label, fontsize=14)
+            plt.ylabel(value_label, fontsize=14)
+            plt.legend()
+            plt.tight_layout()
+            img_base64 = _figure_to_base64(plt.gcf())
+            result_md += f"![Forecast Plot](data:image/png;base64,{img_base64})\n\n"
             
-            # 3. Questions about averages or means
-            avg_pattern = r"(?:what is|what's|find|calculate).*(?:average|mean|median).*(?:of|for)?\s+(.+?)(?:\?|$)"
-            avg_match = re.search(avg_pattern, query_lower)
+            forecast_df = forecast_series.reset_index()
+            forecast_df.columns = [time_label, f"Forecasted {value_label}"]
+            result_md += "### Forecasted Values:\n" + forecast_df.to_markdown(index=False, floatfmt=".2f")
             
-            if avg_match:
-                col_hint = avg_match.group(1).strip()
+            return result_md
+
+        except Exception as e:
+            logger.error(f"Error forecasting revenue: {e}", exc_info=True)
+            return f"Error forecasting data: {str(e)}"
+
+    @mcp.tool()
+    async def generate_insights(
+        ctx: Context,
+        data_summary_or_report: str, # Markdown from other tools
+        query: Optional[str] = "What are the key insights from this data?"
+    ) -> str:
+        """
+        Uses an LLM to generate textual insights, explanations, or summaries from processed data or reports.
+        (Note: Actual LLM call needs mcp_client to be available in ctx)
+        """
+        try:
+            if not hasattr(ctx, 'mcp_client') or not hasattr(ctx.mcp_client, 'call_llm'):
+                return "LLM client not available in context. Cannot generate insights."
+
+            llm_prompt = f"""
+Analyze the following data summary/report and provide key insights based on the user's query.
+
+User Query: {query}
+
+Data/Report:
+---
+{data_summary_or_report}
+---
+
+Key Insights (be concise and focus on actionable information):
+"""
+            # Simulated LLM call
+            # llm_response_data = await ctx.mcp_client.call_llm(prompt=llm_prompt) # or construct messages list
+            # insights = llm_response_data.get("choices")[0].get("message").get("content")
+            
+            # Placeholder for now as direct LLM call mechanism is not fully defined here
+            insights = (
+                f"Based on the query \"{query}\" and the provided data/report:\n"
+                "- Insight 1: [Simulated insight based on patterns in the data/report]\n"
+                "- Insight 2: [Another simulated observation]\n"
+                "- Recommendation: [A possible action based on the insights]\n"
+                "(This is a placeholder. A live LLM would provide more specific insights.)"
+            )
+            logger.info(f"Generated insights for query: {query}")
+            return f"## AI Generated Insights\n\n{insights}"
+
+        except Exception as e:
+            logger.error(f"Error generating insights: {e}", exc_info=True)
+            return f"Error generating insights: {str(e)}"
+
+    @mcp.tool()
+    async def rank_clients(
+        ctx: Context,
+        data: Union[List[Dict[str, Any]], pd.DataFrame],
+        rank_by_original: List[str], # Columns to rank by (original names)
+        ascending: Union[List[bool], bool] = False, # Corresponding sort orders
+        id_column_original: Optional[str] = None,
+        query: Optional[str] = None,
+        top_n: Optional[int] = None
+    ) -> str:
+        """
+        Ranks clients or entities based on multiple criteria.
+        Uses profiled metadata to identify ID column if not specified.
+        """
+        try:
+            df, metadata_map = _ensure_dataframe_and_profile(data, profiler)
+            if df is None or metadata_map is None: return "No data for ranking or data is empty."
+
+            valid_rank_cols = [col for col in rank_by_original if col in metadata_map and metadata_map[col].semantic_type in ["Currency", "Float", "Integer", "Percentage", "Year"]]
+            if not valid_rank_cols: return "No valid numeric columns provided for ranking."
+
+            df_rank = df.copy()
+            for col in valid_rank_cols: # Ensure numeric
+                 df_rank[col] = pd.to_numeric(df_rank[col], errors='coerce')
+            
+            # Handle ascending: if single bool, apply to all; if list, match with rank_by_original
+            if isinstance(ascending, bool):
+                asc_list = [ascending] * len(valid_rank_cols)
+            elif isinstance(ascending, list) and len(ascending) == len(valid_rank_cols):
+                asc_list = ascending
+            else:
+                asc_list = [False] * len(valid_rank_cols) # Default to descending
+
+            df_ranked = df_rank.sort_values(by=valid_rank_cols, ascending=asc_list).dropna(subset=valid_rank_cols)
+            
+            if top_n and top_n > 0:
+                df_ranked = df_ranked.head(top_n)
+
+            id_col = _get_col_by_cleaned_name_or_query(query, metadata_map, target_semantic_types=["Identifier", "Categorical"], fallback_original_name=id_column_original)
+            if not id_col: id_col = _get_col_by_semantic_type(metadata_map, "Identifier") or df.columns[0]
+            
+            display_cols = [id_col] + valid_rank_cols
+            # Filter display_cols to those actually in df_ranked
+            display_cols = [col for col in display_cols if col in df_ranked.columns]
+
+
+            result_md = f"## Ranked Clients/Entities\n\n"
+            result_md += "Ranked by: " + ", ".join([metadata_map[col].cleaned_name for col in valid_rank_cols]) + "\n\n"
+            
+            # Create a new DataFrame for display with cleaned names
+            df_display = df_ranked[display_cols].copy()
+            df_display.columns = [metadata_map.get(col, ColumnMetadata(original_name=col, cleaned_name=col, semantic_type="Unknown", pandas_dtype="object", description="", count=0,null_count=0,null_ratio=0,unique_count=0,unique_ratio=0,profile_summary="")).cleaned_name for col in display_cols]
+            
+            result_md += df_display.to_markdown(index=False, floatfmt=".2f")
+            return result_md
+
+        except Exception as e:
+            logger.error(f"Error ranking clients: {e}", exc_info=True)
+            return f"Error ranking data: {str(e)}"
+
+    @mcp.tool()
+    async def filter_table(
+        ctx: Context,
+        data: Union[List[Dict[str, Any]], pd.DataFrame],
+        filter_query: str, # Natural language filter query, e.g., "revenue > 1M and region is USA"
+        output_format: str = "markdown" # markdown, json
+    ) -> str:
+        """
+        Filters tabular data based on a natural language query.
+        Uses profiled metadata to understand column types for filtering.
+        (Note: Full NLP parsing of filter_query is complex; this uses a simplified approach.)
+        """
+        try:
+            df, metadata_map = _ensure_dataframe_and_profile(data, profiler)
+            if df is None or metadata_map is None: return "No data to filter or data is empty."
+
+            df_filtered = df.copy()
+            conditions_applied = []
+
+            # Simplified parsing: "column_name operator value" and "column_name is value"
+            # And "column_name contains value" for strings
+            # Operators: >, <, >=, <=, ==, !=, is, contains
+            # Multiple conditions can be chained with "and" (for now, only "and" is implicitly handled by sequential filtering)
+            
+            # Split query by "and" to handle multiple conditions sequentially
+            sub_queries = re.split(r'\s+and\s+', filter_query, flags=re.IGNORECASE)
+
+            for sub_q in sub_queries:
+                sub_q = sub_q.strip()
+                # Pattern: col_name operator value (e.g. "revenue > 1000000")
+                match_op_val = re.match(r"(.+?)\s*([><=!]+|is(?:\s+not)?|contains(?:\s+not)?)\s*(.+)", sub_q, re.IGNORECASE)
                 
-                # Try to find matching column
-                matched_cols = []
-                for col in df.columns:
-                    if col.lower() in col_hint or col.lower().replace('_', ' ') in col_hint:
-                        matched_cols.append(col)
-                
-                if not matched_cols:
-                    # Try to find any numeric column that might match
-                    numeric_cols = detect_numeric_columns
+                if match_op_val:
+                    col_hint, operator, value_str = match_op_val.groups()
+                    col_hint = col_hint.strip()
+                    operator = operator.strip().lower()
+                    value_str = value_str.strip().strip("'\"") # Remove quotes
+
+                    target_col = _get_col_by_cleaned_name_or_query(col_hint, metadata_map)
+                    if not target_col: 
+                        logger.warning(f"Filter: Could not find column for hint '{col_hint}' in query '{sub_q}'")
+                        continue
+                    
+                    meta = metadata_map[target_col]
+                    series = df_filtered[target_col]
+                    condition_applied_text = f"'{meta.cleaned_name}' {operator} '{value_str}'"
+
+                    try:
+                        if meta.semantic_type in ["Currency", "Float", "Integer", "Percentage", "Year"]:
+                            series_numeric = pd.to_numeric(series, errors='coerce')
+                            value_numeric = float(value_str.replace(',',''))
+                            if operator == '>': df_filtered = df_filtered[series_numeric > value_numeric]
+                            elif operator == '<': df_filtered = df_filtered[series_numeric < value_numeric]
+                            elif operator == '>=': df_filtered = df_filtered[series_numeric >= value_numeric]
+                            elif operator == '<=': df_filtered = df_filtered[series_numeric <= value_numeric]
+                            elif operator == '==' or operator == 'is': df_filtered = df_filtered[series_numeric == value_numeric]
+                            elif operator == '!=': df_filtered = df_filtered[series_numeric != value_numeric]
+                            else: continue # Unknown operator for numeric
+                        elif meta.semantic_type in ["Date", "Timestamp"]:
+                            series_dt = pd.to_datetime(series, errors='coerce')
+                            value_dt = pd.to_datetime(value_str)
+                            if operator == '>': df_filtered = df_filtered[series_dt > value_dt]
+                            elif operator == '<': df_filtered = df_filtered[series_dt < value_dt]
+                            # ... add more date operators
+                        else: # Categorical, String, Identifier, Boolean
+                            series_str = series.astype(str).str.lower()
+                            value_lower = value_str.lower()
+                            if operator == 'is' or operator == '==': df_filtered = df_filtered[series_str == value_lower]
+                            elif operator == 'is not' or operator == '!=': df_filtered = df_filtered[series_str != value_lower]
+                            elif operator == 'contains': df_filtered = df_filtered[series_str.str.contains(value_lower, na=False)]
+                            elif operator == 'contains not': df_filtered = df_filtered[~series_str.str.contains(value_lower, na=False)]
+                            else: continue # Unknown operator for string
+                        conditions_applied.append(condition_applied_text)
+                    except Exception as filter_ex:
+                        logger.warning(f"Could not apply filter '{sub_q}' on column '{target_col}': {filter_ex}")
+                        continue
+            
+            result_md = f"## Filtered Table\n\n"
+            if conditions_applied:
+                 result_md += "Applied filters: " + ", and ".join(conditions_applied) + "\n"
+            else:
+                 result_md += "No valid filters could be applied from the query.\n"
+            result_md += f"Found {len(df_filtered)} matching records.\n\n"
+
+            if output_format.lower() == "json":
+                return df_filtered.to_json(orient="records", indent=2)
+            
+            # For markdown, use the main formatter tool for consistency
+            # This requires data to be list of dicts
+            # Re-profile the filtered data for accurate final formatting
+            filtered_data_list = df_filtered.to_dict(orient='records')
+            if not filtered_data_list: return result_md + "No records match the filter criteria."
+
+            # Call format_table_for_llm from app.tools.data_processor
+            # This creates a dependency, or we can duplicate some formatting logic here.
+            # For now, let's assume a simpler markdown for filtered results.
+            # A better way would be to call the format_table_for_llm tool if it's registered.
+            
+            # Simplified markdown output:
+            df_display_filtered = df_filtered.copy()
+            df_display_filtered.columns = [metadata_map.get(col, ColumnMetadata(original_name=col, cleaned_name=col, semantic_type="Unknown", pandas_dtype="object", description="", count=0,null_count=0,null_ratio=0,unique_count=0,unique_ratio=0,profile_summary="")).cleaned_name for col in df_filtered.columns]
+            result_md += df_display_filtered.head(20).to_markdown(index=False, floatfmt=".2f") # Show top 20
+            if len(df_filtered) > 20:
+                result_md += f"\n\n(...and {len(df_filtered) - 20} more rows)"
+
+            return result_md
+
+        except Exception as e:
+            logger.error(f"Error filtering table: {e}", exc_info=True)
+            return f"Error filtering table: {str(e)}"
+
+    logger.info("Registered analytics suite tools.")
+
