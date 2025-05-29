@@ -79,8 +79,21 @@ class LangChainBridge(MCPBridge):
                 # Try to extract schema from tool object
                 for attr in ['input_schema', 'schema', 'parameters']:
                     if hasattr(tool_obj, attr):
-                        schema = getattr(tool_obj, attr)
-                        break
+                        attr_value = getattr(tool_obj, attr)
+                        # If it's a method, call it
+                        if callable(attr_value):
+                            try:
+                                schema = attr_value()
+                                if schema:
+                                    break
+                            except Exception as e:
+                                logger.debug(f"Failed to call {attr} method: {e}")
+                                continue
+                        else:
+                            # If it's a property/attribute, use it directly
+                            schema = attr_value
+                            if schema:
+                                break
                 
                 # If no schema found, try to extract from function signature
                 if not schema and hasattr(tool_obj, 'fn'):
@@ -117,11 +130,19 @@ class LangChainBridge(MCPBridge):
                         
                         schema["properties"][param_name] = param_info
                 
+                # Ensure we have a valid schema format for LangChain
+                if not isinstance(schema, dict):
+                    schema = {"type": "object", "properties": {}}
+                elif "type" not in schema:
+                    schema = {"type": "object", "properties": schema.get("properties", {})}
+                
                 self._tool_schemas_cache[tool_name] = schema
                 return schema
         
         # Default empty schema if not found
-        return {"type": "object", "properties": {}}
+        default_schema = {"type": "object", "properties": {}}
+        self._tool_schemas_cache[tool_name] = default_schema
+        return default_schema
 
     async def _build_tools(self) -> List[Any]:
         """Wrap all MCP tools as LangChain-compatible tools."""
