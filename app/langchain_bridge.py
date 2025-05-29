@@ -250,7 +250,10 @@ class LangChainBridge(MCPBridge):
                     input_with_context = f"{query}\n\nContext: {context_str}"
                     
                 # Execute the agent
-                result = await agent_executor.ainvoke({"input": input_with_context})
+                result = await agent_executor.ainvoke({
+                    "input": input_with_context,
+                    "tools": [f"{tool.name}: {tool.description}" for tool in tools]
+                })
                 logger.info(f"LangChain agent returned: {result}")
             except Exception as e:
                 logger.error(f"LangChain agent failed: {e}")
