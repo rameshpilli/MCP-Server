@@ -18,6 +18,312 @@ logger = logging.getLogger('mcp_server.tools.clientview_financials')
 BASE_URL = os.getenv("CLIENTVIEW_BASE_URL", "http://localhost:8001")
 
 ###################
+# COLUMN METADATA REGISTRY
+###################
+
+class DataType:
+    """Standard data types for column metadata"""
+    STRING = "string"
+    INTEGER = "integer"
+    CURRENCY = "currency"
+    PERCENTAGE = "percentage"
+    DATE = "date"
+    BOOLEAN = "boolean"
+
+class Category:
+    """Standard categories for column organization"""
+    IDENTIFICATION = "identification"
+    DEMOGRAPHICS = "demographics"
+    REVENUE_CURRENT = "revenue_current"
+    REVENUE_PREVIOUS = "revenue_previous"
+    REVENUE_HISTORICAL = "revenue_historical"
+    RANKING = "ranking"
+    INTERACTIONS_CURRENT = "interactions_current"
+    INTERACTIONS_PREVIOUS = "interactions_previous"
+    METADATA = "metadata"
+
+# Centralized Column Metadata Registry
+COLUMN_METADATA_REGISTRY = {
+    # Identification Fields
+    'ClientName': {
+        'display_name': 'Client Name',
+        'data_type': DataType.STRING,
+        'description': 'Full legal name of the client entity',
+        'category': Category.IDENTIFICATION,
+        'required': True,
+        'sortable': True
+    },
+    'ClientCDRID': {
+        'display_name': 'Client CDRID',
+        'data_type': DataType.INTEGER,
+        'description': 'Unique client identifier in the system',
+        'category': Category.IDENTIFICATION,
+        'required': True,
+        'sortable': True
+    },
+    'GID': {
+        'display_name': 'GID',
+        'data_type': DataType.STRING,
+        'description': 'Global identifier for the client',
+        'category': Category.IDENTIFICATION,
+        'required': False,
+        'sortable': False
+    },
+    
+    # Demographics Fields
+    'RegionName': {
+        'display_name': 'Region',
+        'data_type': DataType.STRING,
+        'description': 'Geographic region where client is located',
+        'category': Category.DEMOGRAPHICS,
+        'required': False,
+        'sortable': True,
+        'filter_values': ['CAN', 'USA', 'EUR', 'APAC', 'LATAM', 'OTHER']
+    },
+    'FocusList': {
+        'display_name': 'Focus List',
+        'data_type': DataType.STRING,
+        'description': 'Strategic client lists (Focus40, FS30, Corp100)',
+        'category': Category.DEMOGRAPHICS,
+        'required': False,
+        'sortable': True,
+        'filter_values': ['Focus40', 'FS30', 'Corp100']
+    },
+    'HierarchyDepth': {
+        'display_name': 'Hierarchy Depth',
+        'data_type': DataType.INTEGER,
+        'description': 'Level in the client organizational hierarchy',
+        'category': Category.DEMOGRAPHICS,
+        'required': False,
+        'sortable': True
+    },
+    
+    # Current Revenue Fields
+    'RevenueYTD': {
+        'display_name': 'Revenue YTD',
+        'data_type': DataType.CURRENCY,
+        'description': 'Year-to-date revenue from this client',
+        'category': Category.REVENUE_CURRENT,
+        'required': True,
+        'sortable': True,
+        'primary_metric': True
+    },
+    
+    # Previous Revenue Fields
+    'RevenuePrevYTD': {
+        'display_name': 'Revenue Prev YTD',
+        'data_type': DataType.CURRENCY,
+        'description': 'Previous year-to-date revenue for comparison',
+        'category': Category.REVENUE_PREVIOUS,
+        'required': False,
+        'sortable': True
+    },
+    'RevenuePrevYear': {
+        'display_name': 'Revenue Prev Year',
+        'data_type': DataType.CURRENCY,
+        'description': 'Full previous year revenue',
+        'category': Category.REVENUE_PREVIOUS,
+        'required': False,
+        'sortable': True
+    },
+    
+    # Historical Revenue Fields (5-year trend)
+    'RevenueY0': {
+        'display_name': 'Revenue Y0',
+        'data_type': DataType.CURRENCY,
+        'description': 'Revenue for current year (Y0)',
+        'category': Category.REVENUE_HISTORICAL,
+        'required': False,
+        'sortable': True
+    },
+    'RevenueY1': {
+        'display_name': 'Revenue Y1',
+        'data_type': DataType.CURRENCY,
+        'description': 'Revenue for previous year (Y-1)',
+        'category': Category.REVENUE_HISTORICAL,
+        'required': False,
+        'sortable': True
+    },
+    'RevenueY2': {
+        'display_name': 'Revenue Y2',
+        'data_type': DataType.CURRENCY,
+        'description': 'Revenue for 2 years ago (Y-2)',
+        'category': Category.REVENUE_HISTORICAL,
+        'required': False,
+        'sortable': True
+    },
+    'RevenueY3': {
+        'display_name': 'Revenue Y3',
+        'data_type': DataType.CURRENCY,
+        'description': 'Revenue for 3 years ago (Y-3)',
+        'category': Category.REVENUE_HISTORICAL,
+        'required': False,
+        'sortable': True
+    },
+    'RevenueY4': {
+        'display_name': 'Revenue Y4',
+        'data_type': DataType.CURRENCY,
+        'description': 'Revenue for 4 years ago (Y-4)',
+        'category': Category.REVENUE_HISTORICAL,
+        'required': False,
+        'sortable': True
+    },
+    
+    # Ranking Fields
+    'Rank': {
+        'display_name': 'Current Rank',
+        'data_type': DataType.INTEGER,
+        'description': 'Current ranking by revenue',
+        'category': Category.RANKING,
+        'required': False,
+        'sortable': True
+    },
+    'RankPrev': {
+        'display_name': 'Previous Rank',
+        'data_type': DataType.INTEGER,
+        'description': 'Previous period ranking for comparison',
+        'category': Category.RANKING,
+        'required': False,
+        'sortable': True
+    },
+    
+    # Current Interaction Fields
+    'InteractionYTD': {
+        'display_name': 'Total Interactions YTD',
+        'data_type': DataType.INTEGER,
+        'description': 'Total client interactions year-to-date',
+        'category': Category.INTERACTIONS_CURRENT,
+        'required': False,
+        'sortable': True
+    },
+    'InteractionCMOCYTD': {
+        'display_name': 'CMOC Interactions YTD',
+        'data_type': DataType.INTEGER,
+        'description': 'Capital Markets Operations Committee interactions YTD',
+        'category': Category.INTERACTIONS_CURRENT,
+        'required': False,
+        'sortable': True
+    },
+    'InteractionGMOCYTD': {
+        'display_name': 'GMOC Interactions YTD',
+        'data_type': DataType.INTEGER,
+        'description': 'Global Markets Operations Committee interactions YTD',
+        'category': Category.INTERACTIONS_CURRENT,
+        'required': False,
+        'sortable': True
+    },
+    
+    # Previous Interaction Fields
+    'InteractionPrevYTD': {
+        'display_name': 'Total Interactions Prev YTD',
+        'data_type': DataType.INTEGER,
+        'description': 'Total client interactions previous year-to-date',
+        'category': Category.INTERACTIONS_PREVIOUS,
+        'required': False,
+        'sortable': True
+    },
+    'InteractionCMOCPrevYTD': {
+        'display_name': 'CMOC Interactions Prev YTD',
+        'data_type': DataType.INTEGER,
+        'description': 'CMOC interactions previous year-to-date',
+        'category': Category.INTERACTIONS_PREVIOUS,
+        'required': False,
+        'sortable': True
+    },
+    'InteractionGMOCPrevYTD': {
+        'display_name': 'GMOC Interactions Prev YTD',
+        'data_type': DataType.INTEGER,
+        'description': 'GMOC interactions previous year-to-date',
+        'category': Category.INTERACTIONS_PREVIOUS,
+        'required': False,
+        'sortable': True
+    },
+    
+    # Metadata Fields
+    'TimePeriodList': {
+        'display_name': 'Time Periods',
+        'data_type': DataType.STRING,
+        'description': 'Comma-separated list of years with data',
+        'category': Category.METADATA,
+        'required': False,
+        'sortable': False
+    },
+    'TimePeriodCategory': {
+        'display_name': 'Time Period Type',
+        'data_type': DataType.STRING,
+        'description': 'Fiscal Year (FY) or Calendar Year (CY)',
+        'category': Category.METADATA,
+        'required': False,
+        'sortable': False,
+        'filter_values': ['FY', 'CY']
+    }
+}
+
+###################
+# COLUMN METADATA UTILITIES
+###################
+
+class ColumnMetadataManager:
+    """Centralized manager for column metadata operations"""
+    
+    @staticmethod
+    def get_columns_by_category(category: str) -> Dict[str, str]:
+        """Get all columns belonging to a specific category"""
+        return {
+            metadata['display_name']: api_field 
+            for api_field, metadata in COLUMN_METADATA_REGISTRY.items()
+            if metadata.get('category') == category
+        }
+    
+    @staticmethod
+    def get_available_categories() -> List[str]:
+        """Get all available column categories"""
+        categories = set()
+        for metadata in COLUMN_METADATA_REGISTRY.values():
+            if 'category' in metadata:
+                categories.add(metadata['category'])
+        return sorted(list(categories))
+    
+    @staticmethod
+    def get_column_description(api_field: str) -> str:
+        """Get description for a specific API field"""
+        if api_field in COLUMN_METADATA_REGISTRY:
+            return COLUMN_METADATA_REGISTRY[api_field].get('description', f'Data for {api_field}')
+        return f'Data for {api_field}'
+    
+    @staticmethod
+    def get_primary_revenue_fields() -> List[str]:
+        """Get the primary revenue fields for summary calculations"""
+        return [
+            api_field for api_field, metadata in COLUMN_METADATA_REGISTRY.items()
+            if metadata.get('category', '').startswith('revenue') and metadata.get('primary_metric', False)
+        ]
+    
+    @staticmethod
+    def get_display_columns_mapping() -> Dict[str, str]:
+        """Get the complete display name to API field mapping"""
+        return {
+            metadata['display_name']: api_field
+            for api_field, metadata in COLUMN_METADATA_REGISTRY.items()
+        }
+    
+    @staticmethod
+    def validate_column_exists(api_field: str) -> bool:
+        """Validate that a column exists in the registry"""
+        return api_field in COLUMN_METADATA_REGISTRY
+    
+    @staticmethod
+    def add_column_metadata(api_field: str, metadata: Dict[str, Any]) -> None:
+        """Add new column metadata to the registry"""
+        required_fields = ['display_name', 'data_type', 'description', 'category']
+        for field in required_fields:
+            if field not in metadata:
+                raise ValueError(f"Missing required field '{field}' in metadata for {api_field}")
+        
+        COLUMN_METADATA_REGISTRY[api_field] = metadata
+        logger.info(f"Added column metadata for {api_field}")
+
+###################
 # Enum Definitions
 ###################
 
@@ -112,13 +418,14 @@ class BaseFinancialModel(BaseModel):
     """
     Base model for all financial API interactions.
     Provides common functionality for API execution and data display.
+    Uses centralized metadata registry for consistent column handling.
     """
     # Common configuration for all derived models
     model_config = ConfigDict(use_enum_values=True, validate_default=True)
     
     # Class variables to be overridden by derived classes
     _endpoint_url: ClassVar[str] = ""  # API endpoint URL
-    _display_columns: ClassVar[Dict[str, str]] = {}  # Column mapping for display
+    _display_columns: ClassVar[List[str]] = []  # List of API field names to display
     
     # Instance variable for storing API response
     _service_response: Any = None
@@ -174,7 +481,7 @@ class BaseFinancialModel(BaseModel):
                 json=payload_final, 
                 headers=headers, 
                 verify=False,
-                timeout=10  # Add timeout for production readiness
+                timeout=30  # Increased timeout for production
             )
             response.raise_for_status()  # Raise exception for HTTP errors
             
@@ -184,7 +491,7 @@ class BaseFinancialModel(BaseModel):
             
         except requests.exceptions.RequestException as e:
             logger.error(f"API request failed: {str(e)}")
-            # For production, consider returning a standard error response format
+            # For production, return a standard error response format
             self._service_response = {
                 "status": "error",
                 "message": f"API request failed: {str(e)}",
@@ -192,22 +499,36 @@ class BaseFinancialModel(BaseModel):
             }
             return self._service_response
     
-    def display(self, max_rows: Optional[int] = None) -> pd.DataFrame:
+    def display(self, max_rows: Optional[int] = None, columns: Optional[List[str]] = None) -> pd.DataFrame:
         """
         Display the API results as a pandas DataFrame.
-        Uses the column mapping defined in the derived class.
+        Uses the centralized metadata registry for column mapping.
 
         Args:
-            max_rows: Optional limit for the number of rows to display. ``None``
-                shows all available rows.
+            max_rows: Optional limit for the number of rows to display. None shows all rows.
+            columns: Optional list of specific API field names to display. None uses default columns.
 
         Returns:
             pandas DataFrame with formatted data
         """
-        if not self._display_columns:
-            raise ValueError("No display columns defined for this model")
+        # Determine which columns to display
+        display_fields = columns if columns else self._display_columns
+        if not display_fields:
+            # Fallback to all available fields in metadata
+            display_fields = list(COLUMN_METADATA_REGISTRY.keys())
+        
+        # Build column mapping from metadata
+        columns_config = {}
+        for api_field in display_fields:
+            if api_field in COLUMN_METADATA_REGISTRY:
+                display_name = COLUMN_METADATA_REGISTRY[api_field]['display_name']
+                columns_config[display_name] = api_field
+            else:
+                # Fallback for fields not in metadata
+                columns_config[api_field] = api_field
+                logger.warning(f"Field {api_field} not found in metadata registry")
 
-        return self._create_display_dataframe(self._display_columns, max_rows=max_rows)
+        return self._create_display_dataframe(columns_config, max_rows=max_rows)
     
     def _create_display_dataframe(
         self,
@@ -222,7 +543,7 @@ class BaseFinancialModel(BaseModel):
         Args:
             columns_config: Mapping of output column names to API response field names
             max_rows: Optional limit for the number of rows in the returned DataFrame.
-                ``None`` means all rows will be included.
+                None means all rows will be included.
             
         Returns:
             pandas DataFrame with the specified columns
@@ -273,10 +594,10 @@ class BaseFinancialModel(BaseModel):
                 # Direct field access
                 row_data[col_name] = data.get(field_path, "N/A")
                 
-        # Format numeric values
+        # Format values using metadata
         for col, val in row_data.items():
-            if isinstance(val, (int, float)):
-                row_data[col] = f"{val:.2f}"
+            api_field = columns_config.get(col, col)
+            row_data[col] = self._format_value(val, api_field)
                 
         return pd.DataFrame([row_data])
     
@@ -287,13 +608,7 @@ class BaseFinancialModel(BaseModel):
         *,
         max_rows: Optional[int] = None,
     ) -> pd.DataFrame:
-        """Process list response into a DataFrame with enhanced interaction data handling.
-
-        Args:
-            data: List of response dictionaries.
-            columns_config: Mapping of output column names to response fields.
-            max_rows: Optional limit of rows to process. ``None`` processes all rows.
-        """
+        """Process list response into a DataFrame with enhanced formatting."""
         if not data:  # Empty list
             return pd.DataFrame({col: [] for col in columns_config.keys()})
 
@@ -320,23 +635,63 @@ class BaseFinancialModel(BaseModel):
                     # Get field value, defaulting to "N/A" if missing
                     value = item.get(field_name, "N/A")
                     
-                    # Special handling for interaction fields
-                    if 'Interaction' in field_name:
-                        if value is None or value == "N/A":
-                            value = "0"
-                        elif isinstance(value, (int, float)):
-                            value = str(int(value))  # Convert to integer string
+                    # Format using metadata
+                    formatted_value = self._format_value(value, field_name)
+                    table[col_name].append(formatted_value)
                     
-                    # Format numeric values (excluding interaction counts)
-                    elif isinstance(value, (int, float)) and 'Interaction' not in field_name:
-                        value = f"{value:.2f}"
-                        
-                    table[col_name].append(value)
             except Exception as e:
                 logger.error(f"Error processing item at index {i}: {str(e)}")
                 # Skip this item on error
                 
         return pd.DataFrame(table)
+    
+    def _format_value(self, value: Any, api_field: str) -> str:
+        """Format a value based on its metadata data type"""
+        if value is None or value == "N/A":
+            return "N/A" if api_field not in COLUMN_METADATA_REGISTRY else "0" if COLUMN_METADATA_REGISTRY[api_field].get('data_type') == DataType.INTEGER else "N/A"
+        
+        if api_field not in COLUMN_METADATA_REGISTRY:
+            return str(value)
+        
+        data_type = COLUMN_METADATA_REGISTRY[api_field]['data_type']
+        
+        if data_type == DataType.CURRENCY:
+            if isinstance(value, (int, float)):
+                return f"{value:,.2f}"
+            elif isinstance(value, str):
+                try:
+                    num_value = float(value.replace(',', '').replace('$', ''))
+                    return f"{num_value:,.2f}"
+                except ValueError:
+                    return str(value)
+        elif data_type == DataType.INTEGER:
+            if isinstance(value, (int, float)):
+                return str(int(value))
+            elif isinstance(value, str):
+                try:
+                    return str(int(float(value)))
+                except ValueError:
+                    return "0"
+        elif data_type == DataType.PERCENTAGE:
+            if isinstance(value, (int, float)):
+                return f"{value:.2f}%"
+        
+        return str(value)
+
+    @classmethod
+    def get_columns_by_category(cls, category: str) -> Dict[str, str]:
+        """Get all columns belonging to a specific category."""
+        return ColumnMetadataManager.get_columns_by_category(category)
+    
+    @classmethod
+    def get_available_categories(cls) -> List[str]:
+        """Get all available column categories."""
+        return ColumnMetadataManager.get_available_categories()
+    
+    @classmethod
+    def get_column_description(cls, api_field: str) -> str:
+        """Get description for a specific API field."""
+        return ColumnMetadataManager.get_column_description(api_field)
 
 ###################
 # Financial Models
@@ -349,21 +704,15 @@ class RisersDecliners(BaseFinancialModel):
     # API endpoint
     _endpoint_url: ClassVar[str] = f"{BASE_URL}/procedure/memsql__client1__getTopClients"
     
-    # Display column mapping - updated to include interaction data
-    _display_columns: ClassVar[Dict[str, str]] = {
-        'Client Name': 'ClientName',
-        'Client CDRID': 'ClientCDRID',
-        'Revenue YTD': 'RevenueYTD',
-        'Region': 'RegionName',
-        'Focus List': 'FocusList',
-        'CMOC Interactions YTD': 'InteractionCMOCYTD',
-        'GMOC Interactions YTD': 'InteractionGMOCYTD',
-        'Total Interactions YTD': 'InteractionYTD',
-        'CMOC Interactions Prev YTD': 'InteractionCMOCPrevYTD',
-        'GMOC Interactions Prev YTD': 'InteractionGMOCPrevYTD',
-        'Total Interactions Prev YTD': 'InteractionPrevYTD'
-    }
-    
+    # Display columns - API field names that should be shown by default
+    _display_columns: ClassVar[List[str]] = [
+        'ClientName', 'ClientCDRID', 'GID', 'RegionName', 'FocusList', 'HierarchyDepth',
+        'RevenueYTD', 'RevenuePrevYTD', 'RevenuePrevYear', 'RevenueY0', 'RevenueY1',
+        'RevenueY2', 'RevenueY3', 'RevenueY4', 'Rank', 'RankPrev', 'InteractionYTD',
+        'InteractionCMOCYTD', 'InteractionGMOCYTD', 'InteractionPrevYTD',
+        'InteractionCMOCPrevYTD', 'InteractionGMOCPrevYTD', 'TimePeriodList', 'TimePeriodCategory'
+    ]
+
     # Model fields
     ccy_code: CCYEnum = Field(description="Currency to report in. USD or CAD.", default=CCYEnum.usd)
     time_period: TimePeriodEnum = Field(description="Time Period. Fiscal/FY or Calendar/CY.", default=TimePeriodEnum.fy)
@@ -386,18 +735,12 @@ class ClientValueByTimePeriod(BaseFinancialModel):
     # API endpoint
     _endpoint_url: ClassVar[str] = f"{BASE_URL}/procedure/memsql__client1__getRevenueTotalByTimePeriod"
     
-    # Display column mapping - updated to include interaction data
-    _display_columns: ClassVar[Dict[str, str]] = {
-        'Client Name': 'ClientName',
-        'Client CDRID': 'ClientCDRID',
-        'Revenue YTD': 'RevenueYTD',
-        'Revenue Prev YTD': 'RevenuePrevYTD',
-        'CMOC Interactions YTD': 'InteractionCMOCYTD',
-        'GMOC Interactions YTD': 'InteractionGMOCYTD',
-        'Total Interactions YTD': 'InteractionYTD',
-        'Time Period List': 'TimePeriodList',
-        'Time Period Category': 'TimePeriodCategory'
-    }
+    # Display columns - API field names
+    _display_columns: ClassVar[List[str]] = [
+        'ClientName', 'ClientCDRID', 'RevenueYTD', 'RevenuePrevYTD',
+        'InteractionCMOCYTD', 'InteractionGMOCYTD', 'InteractionYTD',
+        'TimePeriodList', 'TimePeriodCategory'
+    ]
     
     # Model fields
     ccy_code: CCYEnum = Field(description="Currency to report in. USD or CAD.", default=CCYEnum.usd)
@@ -420,16 +763,11 @@ class ClientValueByProduct(BaseFinancialModel):
     # API endpoint
     _endpoint_url: ClassVar[str] = f"{BASE_URL}/procedure/memsql__client1__getClientValueRevenueByProduct"
     
-    # Display column mapping - updated to include interaction data
-    _display_columns: ClassVar[Dict[str, str]] = {
-        'Product Name': 'ProductName',
-        'Revenue YTD': 'RevenueYTD',
-        'Revenue Prev YTD': 'RevenuePrevYTD',
-        'Product ID': 'ProductID',
-        'Product Hierarchy Depth': 'ProductHierarchyDepth',
-        'Parent Product ID': 'ParentProductID',
-        'Time Period List': 'TimePeriodList'
-    }
+    # Display columns - API field names (Note: ProductName, ProductID etc. are not in our main registry)
+    _display_columns: ClassVar[List[str]] = [
+        'ProductName', 'RevenueYTD', 'RevenuePrevYTD', 'ProductID',
+        'ProductHierarchyDepth', 'ParentProductID', 'TimePeriodList'
+    ]
     
     # Model fields
     ccy_code: CCYEnum = Field(description="Currency to report in. USD or CAD.", default=CCYEnum.usd)
@@ -559,6 +897,15 @@ def register_tools(mcp):
             
             result = rd.execute()
             
+            # Debug: Log raw API response structure
+            if result.get('status') == 'success':
+                data = result.get('data', [])
+                if data and isinstance(data, list) and len(data) > 0:
+                    sample_item = data[0]
+                    revenue_fields = {k: v for k, v in sample_item.items() if 'revenue' in k.lower()}
+                    logger.debug(f"Available revenue fields in API response: {revenue_fields}")
+                    logger.debug(f"Using RevenueYTD field: {sample_item.get('RevenueYTD', 'NOT FOUND')}")
+            
             # Check API call status
             if result.get('status') != 'success':
                 return f"Error retrieving top clients: {result.get('message', 'Unknown error')}"
@@ -576,12 +923,53 @@ def register_tools(mcp):
             # Add summary information
             if not df.empty:
                 try:
+                    # Debug: Log the raw data before processing
+                    logger.debug(f"DataFrame columns: {df.columns.tolist()}")
+                    logger.debug(f"First few rows:\n{df.head()}")
+                    
+                    # Determine which revenue field to use for summary based on query context
+                    # Check if user is asking for previous year data
+                    query_context = str(ctx).lower() if hasattr(ctx, 'context') else ""
+                    
+                    revenue_field = 'Revenue YTD'  # Default
+                    if 'Revenue Prev Year' in df.columns and ('previous year' in query_context or 'prev year' in query_context or 'last year' in query_context):
+                        revenue_field = 'Revenue Prev Year'
+                        logger.info(f"Using {revenue_field} for summary based on query context")
+                    elif 'Revenue Prev YTD' in df.columns and ('previous ytd' in query_context or 'prev ytd' in query_context):
+                        revenue_field = 'Revenue Prev YTD'
+                        logger.info(f"Using {revenue_field} for summary based on query context")
+                    
                     # For revenue columns, convert to float first
-                    revenue_col = df['Revenue YTD']
-                    total_revenue = sum(float(rev.replace(',', '')) for rev in revenue_col)
-                    result += f"\n\nTotal Revenue (top {len(df)} clients): {total_revenue:,.2f} {currency}"
+                    revenue_col = df[revenue_field]
+                    logger.debug(f"Revenue column ({revenue_field}) values: {revenue_col.tolist()[:5]}")
+                    
+                    # Handle both formatted strings and raw numbers
+                    total_revenue = 0
+                    for rev in revenue_col:
+                        if isinstance(rev, str):
+                            # Remove commas and convert to float
+                            rev_clean = rev.replace(',', '').replace('$', '')
+                            total_revenue += float(rev_clean)
+                        elif isinstance(rev, (int, float)):
+                            total_revenue += float(rev)
+                    
+                    logger.debug(f"Calculated total revenue: {total_revenue}")
+                    
+                    # Create more descriptive summary
+                    field_description = {
+                        'Revenue YTD': 'YTD',
+                        'Revenue Prev YTD': 'Previous YTD', 
+                        'Revenue Prev Year': 'Previous Year'
+                    }.get(revenue_field, revenue_field)
+                    
+                    result += f"\n\nTotal {field_description} Revenue (top {len(df)} clients): {total_revenue:,.2f} {currency}"
                 except Exception as e:
                     logger.error(f"Error calculating total revenue: {e}")
+                    # Add debug info about the raw API response
+                    if hasattr(rd, '_service_response') and rd._service_response:
+                        sample_data = rd._service_response.get('data', [])
+                        if sample_data:
+                            logger.debug(f"Sample raw API data: {sample_data[0] if isinstance(sample_data, list) else sample_data}")
             
             return result
             
@@ -757,5 +1145,212 @@ def register_tools(mcp):
             logger.error(f"Error getting client value by time: {e}")
             return f"Error retrieving client value by time: {str(e)}"
 
+    @register_tool(
+        name="list_available_data_fields",
+        description="List all available data fields and their descriptions for client financial data. Use this to understand what information is available before querying.",
+        namespace="crm",
+        input_schema={
+            "category_filter": {"type": "string", "description": "Optional category to filter by: 'identification', 'demographics', 'revenue_current', 'revenue_previous', 'revenue_historical', 'ranking', 'interactions_current', 'interactions_previous', 'metadata'", "default": None}
+        }
+    )
+    @mcp.tool()
+    async def list_available_data_fields(ctx: Context, category_filter: str = None) -> str:
+        """
+        List all available data fields and their descriptions.
+        
+        Args:
+            ctx: The MCP context
+            category_filter: Optional category to filter by
+            
+        Returns:
+            List of available fields with descriptions
+        """
+        try:
+            logger.info(f"Listing available data fields with category_filter={category_filter}")
+            
+            # Get metadata from the centralized registry
+            metadata = COLUMN_METADATA_REGISTRY
+            
+            if not metadata:
+                return "No metadata available"
+            
+            # Filter by category if specified
+            if category_filter:
+                filtered_metadata = {
+                    field: meta for field, meta in metadata.items() 
+                    if meta.get('category') == category_filter
+                }
+                if not filtered_metadata:
+                    available_categories = ColumnMetadataManager.get_available_categories()
+                    return f"No fields found for category '{category_filter}'. Available categories: {', '.join(available_categories)}"
+                metadata = filtered_metadata
+            
+            # Build the output
+            result = "## Available Data Fields"
+            if category_filter:
+                result += f" - Category: {category_filter.title()}"
+            result += "\n\n"
+            
+            # Group by category
+            categories = {}
+            for field, meta in metadata.items():
+                category = meta.get('category', 'uncategorized')
+                if category not in categories:
+                    categories[category] = []
+                categories[category].append((field, meta))
+            
+            # Display by category
+            for category, fields in sorted(categories.items()):
+                result += f"### {category.replace('_', ' ').title()}\n\n"
+                
+                for field, meta in sorted(fields, key=lambda x: x[1].get('display_name', x[0])):
+                    display_name = meta.get('display_name', field)
+                    data_type = meta.get('data_type', 'unknown')
+                    description = meta.get('description', 'No description available')
+                    required = meta.get('required', False)
+                    sortable = meta.get('sortable', False)
+                    
+                    result += f"- **{display_name}** (`{field}`) - *{data_type}*"
+                    if required:
+                        result += " **[Required]**"
+                    if sortable:
+                        result += " **[Sortable]**"
+                    result += f"\n  {description}\n"
+                    
+                    # Add filter values if available
+                    if 'filter_values' in meta:
+                        result += f"  *Possible values: {', '.join(meta['filter_values'])}*\n"
+                    result += "\n"
+            
+            # Add summary
+            result += f"\n**Total Fields Available:** {len(metadata)}\n"
+            
+            if not category_filter:
+                available_categories = ColumnMetadataManager.get_available_categories()
+                result += f"**Available Categories:** {', '.join(available_categories)}\n"
+                result += "\nTo filter by category, use the `category_filter` parameter with one of the available categories."
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error listing available data fields: {e}")
+            return f"Error retrieving data field information: {str(e)}"
+
 # Log registration of tools
-logger.info("Registered ClientView financial tools: get_top_clients, get_client_value_by_product, get_client_value_by_time") 
+n ,,,,,logger.info("Registere,,,1d ClientView financial tools: get_top_clients, get_client_value_by_product, get_client_value_by_time, list_available_data_fields")
+
+###################
+# METADATA UTILITIES
+###################
+
+def add_new_column_metadata(api_field: str, display_name: str, data_type: str, 
+                           description: str, category: str, **kwargs) -> None:
+    """
+    Utility function to add new column metadata to the registry.
+    
+    Args:
+        api_field: The API field name (e.g., 'ClientName')
+        display_name: Human-readable display name (e.g., 'Client Name')
+        data_type: Data type using DataType constants (e.g., DataType.STRING)
+        description: Description of what this field contains
+        category: Category using Category constants (e.g., Category.IDENTIFICATION)
+        **kwargs: Additional metadata properties (required, sortable, filter_values, etc.)
+    
+    Example:
+        add_new_column_metadata(
+            'NewRevenueField',
+            'New Revenue Field', 
+            DataType.CURRENCY,
+            'Revenue from new product line',
+            Category.REVENUE_CURRENT,
+            required=False,
+            sortable=True
+        )
+    """
+    try:
+        metadata = {
+            'display_name': display_name,
+            'data_type': data_type,
+            'description': description,
+            'category': category,
+            **kwargs
+        }
+        
+        ColumnMetadataManager.add_column_metadata(api_field, metadata)
+        logger.info(f"Successfully added metadata for column: {api_field}")
+        
+    except Exception as e:
+        logger.error(f"Failed to add metadata for column {api_field}: {e}")
+        raise
+
+def validate_metadata_integrity() -> Dict[str, Any]:
+    """
+    Validate the integrity of the metadata registry.
+    
+    Returns:
+        Dictionary with validation results and statistics
+    """
+    validation_results = {
+        'total_fields': len(COLUMN_METADATA_REGISTRY),
+        'categories': ColumnMetadataManager.get_available_categories(),
+        'missing_required_fields': [],
+        'invalid_data_types': [],
+        'invalid_categories': [],
+        'duplicate_display_names': []
+    }
+    
+    valid_data_types = [DataType.STRING, DataType.INTEGER, DataType.CURRENCY, 
+                       DataType.PERCENTAGE, DataType.DATE, DataType.BOOLEAN]
+    valid_categories = [Category.IDENTIFICATION, Category.DEMOGRAPHICS, 
+                       Category.REVENUE_CURRENT, Category.REVENUE_PREVIOUS,
+                       Category.REVENUE_HISTORICAL, Category.RANKING,
+                       Category.INTERACTIONS_CURRENT, Category.INTERACTIONS_PREVIOUS,
+                       Category.METADATA]
+    
+    display_names = []
+    
+    for api_field, metadata in COLUMN_METADATA_REGISTRY.items():
+        # Check required fields
+        required_fields = ['display_name', 'data_type', 'description', 'category']
+        for field in required_fields:
+            if field not in metadata:
+                validation_results['missing_required_fields'].append(f"{api_field}.{field}")
+        
+        # Check data types
+        if metadata.get('data_type') not in valid_data_types:
+            validation_results['invalid_data_types'].append(f"{api_field}: {metadata.get('data_type')}")
+        
+        # Check categories
+        if metadata.get('category') not in valid_categories:
+            validation_results['invalid_categories'].append(f"{api_field}: {metadata.get('category')}")
+        
+        # Check for duplicate display names
+        display_name = metadata.get('display_name')
+        if display_name in display_names:
+            validation_results['duplicate_display_names'].append(display_name)
+        else:
+            display_names.append(display_name)
+    
+    validation_results['is_valid'] = (
+        len(validation_results['missing_required_fields']) == 0 and
+        len(validation_results['invalid_data_types']) == 0 and
+        len(validation_results['invalid_categories']) == 0 and
+        len(validation_results['duplicate_display_names']) == 0
+    )
+    
+    return validation_results
+
+# Validate metadata on module load
+try:
+    validation = validate_metadata_integrity()
+    if validation['is_valid']:
+        logger.info(f"✅ Metadata registry validation passed. {validation['total_fields']} fields across {len(validation['categories'])} categories.")
+    else:
+        logger.warning("⚠️ Metadata registry validation issues found:")
+        for issue_type, issues in validation.items():
+            if isinstance(issues, list) and issues:
+                logger.warning(f"  {issue_type}: {issues}")
+except Exception as e:
+    logger.error(f"❌ Failed to validate metadata registry: {e}")
+
+logger.info("🚀 ClientView Financials module loaded successfully with centralized metadata registry") 

@@ -35,6 +35,7 @@ class LangChainBridge(MCPBridge):
             from langchain.agents.output_parsers import OpenAIFunctionsAgentOutputParser
             from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
             from langchain.tools.render import format_tool_to_openai_function
+            from langchain.agents import create_openai_functions_agent, create_react_agent
         except Exception as exc:
             raise ImportError("LangChain packages are required for LangChainBridge") from exc
 
@@ -48,6 +49,8 @@ class LangChainBridge(MCPBridge):
         self._ChatPromptTemplate = ChatPromptTemplate
         self._MessagesPlaceholder = MessagesPlaceholder
         self._format_tool_to_openai_function = format_tool_to_openai_function
+        self._create_openai_functions_agent = create_openai_functions_agent
+        self._create_react_agent = create_react_agent
 
         # Inject our internal LLM (via wrapper) instead of OpenAI
         if llm is None:
@@ -199,6 +202,15 @@ class LangChainBridge(MCPBridge):
             if not tools:
                 logger.warning("No tools available for planning")
                 return []
+            
+            # Try simple LLM planning first
+            logger.info("Trying simple LLM planning approach...")
+            simple_plan = await self._simple_plan_with_llm(query, tools, context)
+            if simple_plan:
+                logger.info(f"Simple LLM planning succeeded with {len(simple_plan)} steps")
+                return simple_plan
+            
+            logger.info("Simple LLM planning returned no results, trying LangChain agent...")
                 
             # Create a better prompt template for the agent
             system_prompt = """You are an expert assistant that helps users by using tools when needed. 
@@ -221,22 +233,53 @@ class LangChainBridge(MCPBridge):
                 self._MessagesPlaceholder(variable_name="agent_scratchpad")
             ])
             
+            # Use a simpler agent approach without function binding
             # Convert tools to OpenAI functions
-            llm_with_tools = self.llm.bind(
-                functions=[self._format_tool_to_openai_function(t) for t in tools]
-            )
+            # llm_with_tools = self.llm.bind(
+            #     functions=[self._format_tool_to_openai_function(t) for t in tools]
+            # )
             
-            # Create the agent
-            agent = (
-                {
-                    "input": lambda x: x["input"],
-                    "tools": lambda x: [tool.name + ": " + tool.description for tool in tools],  # Add tools info
-                    "agent_scratchpad": lambda x: self._format_to_openai_function_messages(x["intermediate_steps"])
-                }
-                | prompt
-                | llm_with_tools
-                | self._OpenAIFunctionsAgentOutputParser()
-            )
+            # Create the agent without function binding for now
+            from langchain.agents import create_openai_functions_agent
+            
+            try:
+                # Try the newer agent creation method
+                agent = create_openai_functions_agent(
+                    llm=self.llm,
+                    tools=tools,
+                    prompt=prompt
+                )
+            except Exception as e:
+                logger.warning(f"Failed to create OpenAI functions agent: {e}")
+                # Fall back to simpler agent
+                from langchain.agents import create_react_agent
+                
+                # Modify prompt for ReAct agent
+                react_prompt = self._ChatPromptTemplate.from_messages([
+                    ("system", """You are an expert assistant that helps users by using tools when needed.
+
+You have access to the following tools:
+{tools}
+
+Use the following format:
+
+Question: the input question you must answer
+Thought: you should always think about what to do
+Action: the action to take, should be one of [{tool_names}]
+Action Input: the input to the action
+Observation: the result of the action
+... (this Thought/Action/Action Input/Observation can repeat N times)
+Thought: I now know the final answer
+Final Answer: the final answer to the original input question"""),
+                    ("human", "{input}"),
+                    self._MessagesPlaceholder(variable_name="agent_scratchpad")
+                ])
+                
+                agent = create_react_agent(
+                    llm=self.llm,
+                    tools=tools,
+                    prompt=react_prompt
+                )
             
             # Create the executor
             agent_executor = self._AgentExecutor(agent=agent, tools=tools, verbose=True)
@@ -365,13 +408,21 @@ class LangChainBridge(MCPBridge):
                 "prompt_type": "general",
             }
         else:
-            # Tool chain execution - convert all steps to endpoints
+            # Tool chain execution - use sequential execution with context passing
+            logger.info(f"Executing tool chain with {len(plan)} steps")
+            
+            # Execute the chain with context passing
+            chain_results = await self._execute_tool_chain_with_context(plan, query)
+            
+            # Convert to the expected format
             endpoints = []
-            for step in plan:
+            for result in chain_results:
                 endpoints.append({
                     "type": "tool",
-                    "name": step["tool"],
-                    "params": step.get("parameters", {}),
+                    "name": result["tool"],
+                    "params": result.get("parameters", {}),
+                    "result": result.get("result"),
+                    "error": result.get("error")
                 })
                 
             return {
@@ -379,7 +430,8 @@ class LangChainBridge(MCPBridge):
                 "endpoints": endpoints,
                 "confidence": 0.9,
                 "prompt_type": "general",
-                "plan": plan  # Include the full plan for reference
+                "plan": plan,  # Include the original plan
+                "chain_results": chain_results  # Include the execution results
             }
             
     async def execute_tool(self, tool_name: str, params: Dict[str, Any], context: Dict[str, Any] = None) -> Any:
@@ -428,3 +480,173 @@ class LangChainBridge(MCPBridge):
         except Exception as e:
             logger.error(f"Error executing tool {tool_name}: {e}")
             return f"Error executing tool {tool_name}: {str(e)}"
+
+    async def _simple_plan_with_llm(self, query: str, tools: List[Any], context: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """Simple tool planning using direct LLM call instead of LangChain agents."""
+        logger.info(f"Using simple LLM planning for query: '{query}'")
+        
+        # Create a simple prompt for tool planning
+        tool_descriptions = []
+        for tool in tools:
+            tool_descriptions.append(f"- {tool.name}: {tool.description}")
+        
+        tools_text = "\n".join(tool_descriptions)
+        
+        planning_prompt = f"""You are a helpful assistant that can use tools to answer user questions.
+
+Available tools:
+{tools_text}
+
+User query: {query}
+
+Please analyze the query and determine which tools (if any) should be used to answer it.
+Respond with a JSON list of tool calls in this format:
+[
+  {{
+    "tool": "tool_name",
+    "parameters": {{"param1": "value1", "param2": "value2"}}
+  }}
+]
+
+IMPORTANT RULES:
+1. If no tools are needed, respond with an empty list: []
+2. Only include tools that are directly relevant to answering the user's question
+3. For tool chains where one tool's output feeds into another, use placeholders like:
+   - "comma_separated_top_5_client_names" for client names from previous results
+   - "previous_result" for the full output of the previous tool
+4. When getting top clients and then analyzing them, the second tool should use the client names from the first
+5. Always specify currency (USD or CAD) and region when relevant
+6. Pay attention to time period requests:
+   - "previous year" or "last year" → include context to use RevenuePrevYear
+   - "previous YTD" → include context to use RevenuePrevYTD  
+   - default → use RevenueYTD
+
+For the query "{query}", what tools should be called?"""
+
+        try:
+            # Use our LLM directly
+            from langchain_core.messages import HumanMessage
+            messages = [HumanMessage(content=planning_prompt)]
+            
+            result = await self.llm.ainvoke(messages)
+            response_text = result.content
+            
+            logger.debug(f"LLM planning response: {response_text}")
+            
+            # Try to parse JSON from the response
+            import re
+            json_match = re.search(r'\[.*\]', response_text, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+                try:
+                    plan = json.loads(json_str)
+                    return self._validate_plan(plan)
+                except json.JSONDecodeError:
+                    logger.warning(f"Failed to parse JSON from LLM response: {json_str}")
+            
+            return []
+        except Exception as e:
+            logger.error(f"Simple LLM planning failed: {e}")
+            return []
+
+    async def _execute_tool_chain_with_context(self, plan: List[Dict[str, Any]], query: str) -> List[Dict[str, Any]]:
+        """Execute a tool chain where each tool can use the output of previous tools."""
+        results = []
+        context_data = {}
+        
+        for i, step in enumerate(plan):
+            tool_name = step["tool"]
+            params = step.get("parameters", {})
+            
+            logger.info(f"Executing tool {i+1}/{len(plan)}: {tool_name}")
+            
+            # Replace parameter placeholders with actual data from previous results
+            if i > 0:  # Not the first tool
+                params = await self._resolve_parameter_placeholders(params, results, context_data)
+            
+            try:
+                # Execute the tool
+                result = await self.execute_tool(tool_name, params)
+                
+                # Store result for future tools
+                step_result = {
+                    "tool": tool_name,
+                    "parameters": params,
+                    "result": result,
+                    "step": i + 1
+                }
+                results.append(step_result)
+                
+                # Extract useful data for next tools
+                context_data[f"tool_{i}_result"] = result
+                context_data[f"tool_{i}_name"] = tool_name
+                
+                # Try to extract specific data types for common use cases
+                if "client" in tool_name.lower() and isinstance(result, str):
+                    # Try to extract client names from table results
+                    client_names = self._extract_client_names_from_result(result)
+                    if client_names:
+                        context_data["extracted_client_names"] = client_names
+                        context_data["client_names_csv"] = ",".join(client_names)
+                
+                logger.info(f"Tool {tool_name} completed successfully")
+                
+            except Exception as e:
+                logger.error(f"Error executing tool {tool_name}: {e}")
+                step_result = {
+                    "tool": tool_name,
+                    "parameters": params,
+                    "error": str(e),
+                    "step": i + 1
+                }
+                results.append(step_result)
+                # Continue with remaining tools even if one fails
+        
+        return results
+    
+    async def _resolve_parameter_placeholders(self, params: Dict[str, Any], previous_results: List[Dict[str, Any]], context_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Replace placeholder values in parameters with actual data from previous tool results."""
+        resolved_params = params.copy()
+        
+        for key, value in resolved_params.items():
+            if isinstance(value, str):
+                # Replace common placeholders
+                if "comma_separated_top_5_client_names" in value or "client_names" in key.lower():
+                    if "client_names_csv" in context_data:
+                        resolved_params[key] = context_data["client_names_csv"]
+                        logger.debug(f"Resolved {key}: {value} -> {context_data['client_names_csv']}")
+                
+                # Replace other placeholders with previous results
+                if "previous_result" in value:
+                    if previous_results:
+                        resolved_params[key] = previous_results[-1]["result"]
+                        logger.debug(f"Resolved {key} with previous result")
+        
+        return resolved_params
+    
+    def _extract_client_names_from_result(self, result: str) -> List[str]:
+        """Extract client names from a table result."""
+        try:
+            import re
+            # Look for markdown table format
+            lines = result.split('\n')
+            client_names = []
+            
+            for line in lines:
+                # Skip header and separator lines
+                if '|' in line and not line.strip().startswith('|:') and 'Client Name' not in line:
+                    parts = line.split('|')
+                    if len(parts) > 1:
+                        # First column after | is usually the client name
+                        client_name = parts[1].strip()
+                        if client_name and client_name not in ['---', '']:
+                            client_names.append(client_name)
+            
+            # Remove duplicates and limit
+            client_names = list(dict.fromkeys(client_names))[:5]
+            logger.debug(f"Extracted client names: {client_names}")
+            return client_names
+            
+        except Exception as e:
+            logger.warning(f"Failed to extract client names: {e}")
+            return []

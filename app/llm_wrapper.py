@@ -148,7 +148,7 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, Base
 from langchain_core.outputs import ChatResult, ChatGeneration
 from pydantic import Field
 import asyncio
-# import logging
+import logging
 
 
 class LLMWrapper(BaseChatModel):
@@ -170,6 +170,9 @@ class LLMWrapper(BaseChatModel):
         logger.debug(f"LLMWrapper received messages: {messages}")
         logger.debug(f"Message types: {[type(m).__name__ for m in messages]}")
         
+        # Import message classes for comparison
+        from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+        
         # Fallback to global MCP client
         if self.call_llm_fn is not None:
             call_llm = self.call_llm_fn
@@ -179,18 +182,36 @@ class LLMWrapper(BaseChatModel):
 
         # Format messages to OpenAI-style prompt
         prompt = []
-        for m in messages:
+        for i, m in enumerate(messages):
+            logger.debug(f"Processing message {i}: type={type(m)}, content_preview={str(m.content)[:100]}...")
             if isinstance(m, SystemMessage):
                 prompt.append({"role": "system", "content": m.content})
+                logger.debug(f"Added system message to prompt")
             elif isinstance(m, HumanMessage):
                 prompt.append({"role": "user", "content": m.content})
+                logger.debug(f"Added user message to prompt")
             elif isinstance(m, AIMessage):
                 prompt.append({"role": "assistant", "content": m.content})
+                logger.debug(f"Added assistant message to prompt")
+            else:
+                logger.warning(f"Unknown message type: {type(m)}")
+                # Try to handle it anyway if it has content
+                if hasattr(m, 'content'):
+                    role = "user"  # Default fallback
+                    if "system" in str(type(m)).lower():
+                        role = "system"
+                    elif "ai" in str(type(m)).lower() or "assistant" in str(type(m)).lower():
+                        role = "assistant"
+                    prompt.append({"role": role, "content": m.content})
+                    logger.debug(f"Added {role} message to prompt as fallback")
 
         logger.debug(f"Converted prompt: {prompt}")
+        logger.debug(f"Prompt length: {len(prompt)}")
         
         if not prompt:
             logger.error(f"Empty prompt after conversion. Original messages: {messages}")
+            logger.error(f"Message types: {[type(m) for m in messages]}")
+            logger.error(f"First message repr: {repr(messages[0]) if messages else 'No messages'}")
             raise ValueError("LLMWrapper: Cannot send empty prompt to LLM.")
 
         raw_response = await call_llm(prompt)
@@ -225,3 +246,10 @@ class LLMWrapper(BaseChatModel):
     @property
     def _llm_type(self) -> str:
         return "custom-internal-llm"
+    
+    def bind(self, **kwargs):
+        """Handle LangChain's bind method for function calling."""
+        logger = logging.getLogger(__name__)
+        logger.debug(f"LLMWrapper.bind called with kwargs: {kwargs}")
+        # For now, just return self since we handle function calling differently
+        return self
