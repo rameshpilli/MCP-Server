@@ -74,67 +74,47 @@ class LangChainBridge(MCPBridge):
             
             if actual_tool_name in mcp_tools:
                 tool_obj = mcp_tools[actual_tool_name]
-                schema = {}
+                schema = {
+                    "type": "object",
+                    "properties": {}
+                }
                 
-                # Try to extract schema from tool object
-                for attr in ['input_schema', 'schema', 'parameters']:
-                    if hasattr(tool_obj, attr):
-                        attr_value = getattr(tool_obj, attr)
-                        # If it's a method, call it
-                        if callable(attr_value):
-                            try:
-                                schema = attr_value()
-                                if schema:
-                                    break
-                            except Exception as e:
-                                logger.debug(f"Failed to call {attr} method: {e}")
-                                continue
-                        else:
-                            # If it's a property/attribute, use it directly
-                            schema = attr_value
-                            if schema:
-                                break
-                
-                # If no schema found, try to extract from function signature
-                if not schema and hasattr(tool_obj, 'fn'):
-                    sig = inspect.signature(tool_obj.fn)
-                    schema = {
-                        "type": "object",
-                        "properties": {}
-                    }
-                    
-                    # Skip first parameter (usually ctx/context)
-                    params = list(sig.parameters.items())
-                    if params and params[0][0] in ('ctx', 'context'):
-                        params = params[1:]
-                    
-                    for param_name, param in params:
-                        param_info = {
-                            "type": "string"  # Default to string
-                        }
+                # Extract schema from function signature (safer approach)
+                if hasattr(tool_obj, 'fn'):
+                    try:
+                        sig = inspect.signature(tool_obj.fn)
                         
-                        # Get annotation if available
-                        if param.annotation != inspect.Parameter.empty:
-                            if param.annotation == str:
-                                param_info["type"] = "string"
-                            elif param.annotation == int:
-                                param_info["type"] = "integer"
-                            elif param.annotation == float:
-                                param_info["type"] = "number"
-                            elif param.annotation == bool:
-                                param_info["type"] = "boolean"
+                        # Skip first parameter (usually ctx/context)
+                        params = list(sig.parameters.items())
+                        if params and params[0][0] in ('ctx', 'context'):
+                            params = params[1:]
                         
-                        # Get default if available
-                        if param.default != inspect.Parameter.empty:
-                            param_info["default"] = param.default
-                        
-                        schema["properties"][param_name] = param_info
-                
-                # Ensure we have a valid schema format for LangChain
-                if not isinstance(schema, dict):
-                    schema = {"type": "object", "properties": {}}
-                elif "type" not in schema:
-                    schema = {"type": "object", "properties": schema.get("properties", {})}
+                        for param_name, param in params:
+                            param_info = {
+                                "type": "string"  # Default to string
+                            }
+                            
+                            # Get annotation if available
+                            if param.annotation != inspect.Parameter.empty:
+                                if param.annotation == str:
+                                    param_info["type"] = "string"
+                                elif param.annotation == int:
+                                    param_info["type"] = "integer"
+                                elif param.annotation == float:
+                                    param_info["type"] = "number"
+                                elif param.annotation == bool:
+                                    param_info["type"] = "boolean"
+                                elif hasattr(param.annotation, "__name__"):
+                                    # Handle other types
+                                    param_info["type"] = "string"
+                            
+                            # Get default if available
+                            if param.default != inspect.Parameter.empty:
+                                param_info["default"] = param.default
+                            
+                            schema["properties"][param_name] = param_info
+                    except Exception as e:
+                        logger.debug(f"Error extracting schema from function signature: {e}")
                 
                 self._tool_schemas_cache[tool_name] = schema
                 return schema
