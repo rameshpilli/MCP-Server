@@ -1,0 +1,11 @@
+2025-05-26 22:09:45,556 - mcp_server - WARNING - Memory module not available: No module named 'redis'
+2025-05-26 22:09:48,670 - mcp_server - WARNING - OAuth not fully configured
+2025-05-26 22:09:48,671 - mcp_server - WARNING - OAuth authentication failed or not configured
+2025-05-26 22:09:48,671 - mcp_server - WARNING - No authentication method available for LLM API
+2025-05-26 22:09:48,673 - mcp_server - INFO - Step: chat_start | Message: Chat session initialized | Session: chat_1748311788 | Status: success
+2025-05-26 22:10:00,700 - mcp_server - INFO - Step: message_received | Message: tell me a joike | Session: chat_1748311800 | Status: processing
+2025-05-26 22:10:00,705 - mcp_server - INFO - call_llm called
+2025-05-26 22:10:00,705 - mcp_server - WARNING - OAuth not fully configured
+2025-05-26 22:10:00,705 - mcp_server - INFO - Got OAuth token: No
+2025-05-26 22:10:00,705 - mcp_server - WARNING - No authentication method available
+2025-05-26 22:10:00,709 - mcp_server - INFO - Step: message_processed | Message: tell me a joike | Session: chat_1748311800 | Status: success

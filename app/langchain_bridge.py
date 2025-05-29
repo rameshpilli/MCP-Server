@@ -11,11 +11,14 @@ Why we use it:
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+import asyncio
+from typing import Any, Dict, List, Optional, Tuple, Union
+import inspect
 
 from .llm_wrapper import LLMWrapper
 from .mcp_bridge import MCPBridge
 from .config import config
+from .utils.parameter_extractor import extract_parameters_with_llm
 
 logger = logging.getLogger(__name__)
 
@@ -23,46 +26,149 @@ logger = logging.getLogger(__name__)
 class LangChainBridge(MCPBridge):
     """Bridge implementation using LangChain planning."""
 
-    def __init__(self, llm: Optional[Any] = None) -> None:
-        super().__init__()
+    def __init__(self, mcp=None, llm: Optional[Any] = None) -> None:
+        super().__init__(mcp)
         try:
             from langchain.agents import AgentType, Tool, initialize_agent
-            from langchain_community.chat_models import ChatOpenAI
+            from langchain.agents.agent import AgentExecutor
+            from langchain.agents.format_scratchpad import format_to_openai_function_messages
+            from langchain.agents.output_parsers import OpenAIFunctionsAgentOutputParser
+            from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
+            from langchain.tools.render import format_tool_to_openai_function
         except Exception as exc:
             raise ImportError("LangChain packages are required for LangChainBridge") from exc
 
-        # LangChain agent configuration
+        # Store LangChain imports for later use
         self._Tool = Tool
         self._initialize_agent = initialize_agent
         self._AgentType = AgentType
+        self._AgentExecutor = AgentExecutor
+        self._format_to_openai_function_messages = format_to_openai_function_messages
+        self._OpenAIFunctionsAgentOutputParser = OpenAIFunctionsAgentOutputParser
+        self._ChatPromptTemplate = ChatPromptTemplate
+        self._MessagesPlaceholder = MessagesPlaceholder
+        self._format_tool_to_openai_function = format_tool_to_openai_function
 
         # Inject our internal LLM (via wrapper) instead of OpenAI
         if llm is None:
             from app.client import mcp_client  # local import to avoid cycle
             llm = LLMWrapper(call_llm_fn=mcp_client.call_llm)
         self.llm = llm
+        
+        # Cache for tool schemas
+        self._tool_schemas_cache = {}
+
+    async def _get_tool_schema(self, tool_name: str) -> Dict[str, Any]:
+        """Get the schema for a specific tool."""
+        if tool_name in self._tool_schemas_cache:
+            return self._tool_schemas_cache[tool_name]
+        
+        tools = await self.get_available_tools()
+        for namespace, tool_dict in tools.items():
+            for name, description in tool_dict.items():
+                full_name = f"{namespace}:{name}" if namespace != "default" else name
+                if full_name == tool_name or name == tool_name:
+                    # Try to get schema from MCP
+                    if self.mcp:
+                        mcp_tools = await self.mcp.get_tools()
+                        if name in mcp_tools:
+                            tool_obj = mcp_tools[name]
+                            schema = {}
+                            
+                            # Try to extract schema from tool object
+                            for attr in ['input_schema', 'schema', 'parameters']:
+                                if hasattr(tool_obj, attr):
+                                    schema = getattr(tool_obj, attr)
+                                    break
+                            
+                            # If no schema found, try to extract from function signature
+                            if not schema and hasattr(tool_obj, 'fn'):
+                                sig = inspect.signature(tool_obj.fn)
+                                schema = {
+                                    "type": "object",
+                                    "properties": {}
+                                }
+                                
+                                # Skip first parameter (usually ctx/context)
+                                params = list(sig.parameters.items())
+                                if params and params[0][0] in ('ctx', 'context'):
+                                    params = params[1:]
+                                
+                                for param_name, param in params:
+                                    param_info = {
+                                        "type": "string"  # Default to string
+                                    }
+                                    
+                                    # Get annotation if available
+                                    if param.annotation != inspect.Parameter.empty:
+                                        if param.annotation == str:
+                                            param_info["type"] = "string"
+                                        elif param.annotation == int:
+                                            param_info["type"] = "integer"
+                                        elif param.annotation == float:
+                                            param_info["type"] = "number"
+                                        elif param.annotation == bool:
+                                            param_info["type"] = "boolean"
+                                    
+                                    # Get default if available
+                                    if param.default != inspect.Parameter.empty:
+                                        param_info["default"] = param.default
+                                    
+                                    schema["properties"][param_name] = param_info
+                            
+                            self._tool_schemas_cache[tool_name] = schema
+                            return schema
+        
+        # Default empty schema if not found
+        return {"type": "object", "properties": {}}
 
     async def _build_tools(self) -> List[Any]:
         """Wrap all MCP tools as LangChain-compatible tools."""
         tools = []
         available = await self.get_available_tools()
 
-        for name, tool in available.items():
-            async def _fn(text: str, tool_name: str = name) -> Any:
-                try:
-                    params = json.loads(text) if text else {}
-                except Exception:
-                    params = {}
-                return await self.execute_tool(tool_name, params)
-
-            tools.append(
-                self._Tool(
-                    name=name,
-                    func=_fn,
-                    coroutine=_fn,
-                    description=getattr(tool, "description", name),
+        for namespace, tool_dict in available.items():
+            for name, description in tool_dict.items():
+                tool_name = f"{namespace}:{name}" if namespace != "default" else name
+                
+                # Create a closure to capture the tool name
+                async def _create_tool_fn(tool_name=tool_name):
+                    async def _fn(text: str) -> Any:
+                        """Execute the tool with parameters extracted from text."""
+                        try:
+                            # Try to parse as JSON first
+                            try:
+                                params = json.loads(text) if text else {}
+                            except Exception:
+                                # If not JSON, try to extract parameters using LLM
+                                schema = await self._get_tool_schema(tool_name)
+                                params = await extract_parameters_with_llm(text, schema, tool_name)
+                            
+                            # Execute the tool
+                            result = await self.execute_tool(tool_name, params)
+                            return result
+                        except Exception as e:
+                            logger.error(f"Error executing tool {tool_name}: {e}")
+                            return f"Error executing tool {tool_name}: {str(e)}"
+                    
+                    return _fn
+                
+                # Create the tool function
+                tool_fn = await _create_tool_fn()
+                
+                # Get tool schema for better function descriptions
+                schema = await self._get_tool_schema(tool_name)
+                
+                # Create LangChain tool
+                lc_tool = self._Tool(
+                    name=tool_name,
+                    func=tool_fn,
+                    coroutine=tool_fn,
+                    description=description,
+                    args_schema=schema
                 )
-            )
+                
+                tools.append(lc_tool)
 
         return tools
 
@@ -70,32 +176,118 @@ class LangChainBridge(MCPBridge):
         self, query: str, context: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
         """Use LangChain to generate a list of tools to run for this query."""
+        if context is None:
+            context = {}
+            
         tools = await self._build_tools()
-        agent = self._initialize_agent(
-            tools,
-            self.llm,
-            agent=self._AgentType.ZERO_SHOT_REACT_DESCRIPTION,
-            verbose=False,
+        if not tools:
+            logger.warning("No tools available for planning")
+            return []
+            
+        # Create a better prompt template for the agent
+        system_prompt = """You are an expert assistant that helps users by using tools when needed. 
+        You have access to the following tools:
+        
+        {tools}
+        
+        When a user asks a question, analyze it carefully to determine if you need to use tools to answer it.
+        If multiple tools are needed, use them in sequence to build a complete answer.
+        Always try to use the most specific tool that matches the user's intent.
+        If no tools are needed, just say so.
+        """
+        
+        human_prompt = "{input}"
+        
+        # Create prompt template
+        prompt = self._ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            ("human", human_prompt),
+            self._MessagesPlaceholder(variable_name="agent_scratchpad")
+        ])
+        
+        # Convert tools to OpenAI functions
+        llm_with_tools = self.llm.bind(
+            functions=[self._format_tool_to_openai_function(t) for t in tools]
         )
+        
+        # Create the agent
+        agent = (
+            {
+                "input": lambda x: x["input"],
+                "agent_scratchpad": lambda x: self._format_to_openai_function_messages(x["intermediate_steps"])
+            }
+            | prompt
+            | llm_with_tools
+            | self._OpenAIFunctionsAgentOutputParser()
+        )
+        
+        # Create the executor
+        agent_executor = self._AgentExecutor(agent=agent, tools=tools, verbose=True)
 
         logger.info(f"Planning tool chain using LangChain for query: '{query}'")
         try:
-            result = await agent.aplan(query)
+            # Add context to the query if available
+            input_with_context = query
+            if context:
+                context_str = json.dumps(context, indent=2)
+                input_with_context = f"{query}\n\nContext: {context_str}"
+                
+            # Execute the agent
+            result = await agent_executor.ainvoke({"input": input_with_context})
             logger.info(f"LangChain agent returned: {result}")
         except Exception as e:
             logger.error(f"LangChain agent failed: {e}")
-            raise
+            return []
 
         # Parse tool calls from agent response
         plan: List[Dict[str, Any]] = []
-        for action, _ in result.get("intermediate_steps", []):
-            name = getattr(action, "tool", None)
-            if not name:
+        for action, action_result in result.get("intermediate_steps", []):
+            tool_name = getattr(action, "tool", None)
+            if not tool_name:
                 continue
-            args = action.tool_input if isinstance(action.tool_input, dict) else {}
-            plan.append({"tool": name, "parameters": args})
+                
+            # Get tool input (parameters)
+            tool_input = action.tool_input
+            if isinstance(tool_input, str):
+                try:
+                    # Try to parse as JSON
+                    params = json.loads(tool_input)
+                except Exception:
+                    # If not JSON, use as is
+                    params = {"text": tool_input}
+            elif isinstance(tool_input, dict):
+                params = tool_input
+            else:
+                params = {}
+                
+            # Add to plan
+            plan.append({
+                "tool": tool_name,
+                "parameters": params,
+                "result": action_result
+            })
 
         return self._validate_plan(plan)
+        
+    def _validate_plan(self, plan: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Validate the plan to ensure it's executable."""
+        if not plan:
+            return []
+            
+        # Filter out any invalid tools
+        valid_plan = []
+        for step in plan:
+            if "tool" not in step:
+                logger.warning(f"Invalid plan step, missing 'tool': {step}")
+                continue
+                
+            # Ensure parameters is a dict
+            if "parameters" not in step or not isinstance(step["parameters"], dict):
+                step["parameters"] = {}
+                
+            valid_plan.append(step)
+            
+        return valid_plan
 
     async def route_request(
         self, query: str, context: Optional[Dict[str, Any]] = None
@@ -106,23 +298,90 @@ class LangChainBridge(MCPBridge):
         try:
             plan = await self.plan_tool_chain(query, context)
         except Exception as exc:
-            logger.warning("LangChain planning failed: %s", exc)
+            logger.warning(f"LangChain planning failed: {exc}")
             plan = []
 
         if not plan:
             logger.info("LangChain returned no plan — falling back to Compass routing.")
             return await super().route_request(query, context)
 
-        step = plan[0]
-        return {
-            "intent": step["tool"],
-            "endpoints": [
-                {
+        # Check if we should execute a single tool or a chain
+        if len(plan) == 1:
+            # Single tool execution
+            step = plan[0]
+            return {
+                "intent": step["tool"],
+                "endpoints": [
+                    {
+                        "type": "tool",
+                        "name": step["tool"],
+                        "params": step.get("parameters", {}),
+                    }
+                ],
+                "confidence": 0.9,
+                "prompt_type": "general",
+            }
+        else:
+            # Tool chain execution - convert all steps to endpoints
+            endpoints = []
+            for step in plan:
+                endpoints.append({
                     "type": "tool",
                     "name": step["tool"],
                     "params": step.get("parameters", {}),
-                }
-            ],
-            "confidence": 0.9,
-            "prompt_type": "general",
-        }
+                })
+                
+            return {
+                "intent": "tool_chain",
+                "endpoints": endpoints,
+                "confidence": 0.9,
+                "prompt_type": "general",
+                "plan": plan  # Include the full plan for reference
+            }
+            
+    async def execute_tool(self, tool_name: str, params: Dict[str, Any], context: Dict[str, Any] = None) -> Any:
+        """Execute a tool with the given parameters."""
+        if context is None:
+            context = {}
+            
+        logger.info(f"Executing tool: {tool_name} with params: {params}")
+        
+        try:
+            # If tool name contains namespace, split it
+            if ":" in tool_name:
+                namespace, name = tool_name.split(":", 1)
+            else:
+                namespace, name = "default", tool_name
+                
+            # Get the tool from MCP
+            if self.mcp:
+                tools = await self.mcp.get_tools()
+                if name in tools:
+                    from fastmcp import Context
+                    
+                    # Create context
+                    ctx = Context(context or {})
+                    
+                    # Get the tool function
+                    tool_func = tools[name].fn
+                    
+                    try:
+                        # Try calling without context first (for @mcp.tool() decorated functions)
+                        if params:
+                            result = await tool_func(**params)
+                        else:
+                            result = await tool_func()
+                    except TypeError:
+                        # If TypeError, try with context
+                        if params:
+                            result = await tool_func(ctx, **params)
+                        else:
+                            result = await tool_func(ctx)
+                            
+                    return result
+            
+            # Fall back to super implementation
+            return await super().execute_tool(tool_name, params, context)
+        except Exception as e:
+            logger.error(f"Error executing tool {tool_name}: {e}")
+            return f"Error executing tool {tool_name}: {str(e)}"

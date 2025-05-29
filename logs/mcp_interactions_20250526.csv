@@ -1,0 +1,4 @@
+timestamp,step,message,session_id,tools_used,context_found,response_length,processing_time_ms,status
+2025-05-26T22:09:48.673705,chat_start,Chat session initialized,chat_1748311788,,False,0,0,success
+2025-05-26T22:10:00.701976,message_received,tell me a joike,chat_1748311800,,False,0,0,processing
+2025-05-26T22:10:00.709978,message_processed,tell me a joike,chat_1748311800,,False,0,7.223844528198242,success

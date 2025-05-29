@@ -5,7 +5,7 @@ This module provides a web-based UI for interacting with the MCP server using Op
 
 1. Architecture Overview:
     - Chainlit web UI frontend
-    - Integration with MCP (Model Context Protocol) servers
+    - Integration with MCP server via HTTP endpoints
     - OpenAI-compatible API handling
     - Memory management with Redis (optional)
 
@@ -24,7 +24,7 @@ This module provides a web-based UI for interacting with the MCP server using Op
     - Format and display processing time statistics
 
 4. Tool Handling:
-    - Dynamically collect tools from connected MCP servers
+    - Dynamically collect tools from connected MCP servers via HTTP
     - Format tools into OpenAI function calling format
     - Execute tool calls in separate steps with proper error handling
     - Display tool results with appropriate formatting
@@ -49,33 +49,53 @@ Key Components:
     - Performance Monitoring
 
 Usage:
-    - Run with: chainlit run chainlit_app.py
+    - Run with: chainlit run ui/app.py
     - Connect to MCP servers via UI
     - Interact with AI assistant with access to all connected tools
-
-Communications:
-    - SSE: This is HTTP-based transport that requires the endpoints
-    - STDIO: This is command-based transport where Chainlit spawns a sub-process and communicates via stdio/stdout.
 """
 import chainlit as cl
 from typing import Dict, Any, List, Optional, Union
-from mcp import ClientSession
-from mcp.types import CallToolResult, TextContent
 import os
 import sys
 import httpx
+import asyncio
 from pathlib import Path
 import time
 import json
 import logging
+import pandas as pd
+import re
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 # Import from app modules
-from app.config import config
-from app.utils.logger import logger, log_interaction, log_error
-
+try:
+    from app.config import config
+    from app.utils.logger import logger, log_interaction, log_error
+except ImportError:
+    # Fallback to basic logging if app modules not available
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger("chainlit_ui")
+    
+    def log_interaction(step, message, session_id=None, **kwargs):
+        logger.info(f"{step}: {message} (session: {session_id})")
+        
+    def log_error(step, error, session_id=None):
+        logger.error(f"{step} error: {error} (session: {session_id})")
+    
+    # Basic config
+    class Config:
+        LLM_MODEL = os.getenv("LLM_MODEL", "gpt-3.5-turbo")
+        LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1/chat/completions")
+        LLM_OAUTH_ENDPOINT = os.getenv("LLM_OAUTH_ENDPOINT", "")
+        LLM_OAUTH_CLIENT_ID = os.getenv("LLM_OAUTH_CLIENT_ID", "")
+        LLM_OAUTH_CLIENT_SECRET = os.getenv("LLM_OAUTH_CLIENT_SECRET", "")
+        LLM_OAUTH_GRANT_TYPE = os.getenv("LLM_OAUTH_GRANT_TYPE", "client_credentials")
+        LLM_OAUTH_SCOPE = os.getenv("LLM_OAUTH_SCOPE", "read")
+        MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "http://localhost:8080")
+        
+    config = Config()
 
 # Try to import memory module, but make it optional
 try:
@@ -103,13 +123,134 @@ oauth_token_expiry = 0
 # Cache for MCP tools
 mcp_tools_cache = {}
 
+# MCP server connection cache
+mcp_servers = {}
+
 # Model settings
 settings = {
-    "model": config.LLM_MODEL,
+    "model": getattr(config, "LLM_MODEL", "gpt-3.5-turbo"),
     "temperature": 0.7,
     "stream": False,  # Non-streaming mode
     "max_tokens": 4000  # Request a larger response
 }
+
+
+# ===== MCP Server Connection Module =====
+async def connect_to_mcp_server(server_url: str, server_name: str = None) -> bool:
+    """
+    Connect to an MCP server via HTTP
+    """
+    if not server_name:
+        server_name = f"mcp-{len(mcp_servers) + 1}"
+        
+    try:
+        # Check if server is reachable
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            # Try to ping the server
+            response = await client.get(f"{server_url}/ping")
+            if response.status_code != 200:
+                logger.error(f"Failed to connect to MCP server at {server_url}: {response.status_code}")
+                return False
+                
+            # Get server information
+            info_response = await client.get(f"{server_url}/")
+            server_info = info_response.json()
+            
+            # Store server connection
+            mcp_servers[server_name] = {
+                "url": server_url,
+                "info": server_info,
+                "connected_at": time.time()
+            }
+            
+            # Fetch tools from the server
+            await fetch_tools_from_server(server_name)
+            
+            return True
+    except Exception as e:
+        logger.error(f"Error connecting to MCP server at {server_url}: {e}")
+        return False
+
+
+async def fetch_tools_from_server(server_name: str) -> List[Dict[str, Any]]:
+    """
+    Fetch tools from an MCP server
+    """
+    if server_name not in mcp_servers:
+        logger.error(f"MCP server {server_name} not found")
+        return []
+        
+    server = mcp_servers[server_name]
+    server_url = server["url"]
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(f"{server_url}/tools")
+            
+            if response.status_code != 200:
+                logger.error(f"Failed to fetch tools from {server_name}: {response.status_code}")
+                return []
+                
+            # Parse tools from response
+            tools_data = response.json()
+            
+            # Handle different response formats
+            tools = []
+            if "tools" in tools_data:
+                # Standard format
+                tools = tools_data["tools"]
+            elif "jsonrpc" in tools_data and "result" in tools_data:
+                # JSON-RPC format
+                tools = tools_data["result"].get("tools", [])
+                
+            # Cache tools
+            mcp_tools_cache[server_name] = tools
+            
+            logger.info(f"Fetched {len(tools)} tools from {server_name}")
+            return tools
+    except Exception as e:
+        logger.error(f"Error fetching tools from {server_name}: {e}")
+        return []
+
+
+async def execute_tool_on_server(server_name: str, tool_name: str, parameters: Dict[str, Any]) -> Any:
+    """
+    Execute a tool on an MCP server
+    """
+    if server_name not in mcp_servers:
+        logger.error(f"MCP server {server_name} not found")
+        return {"error": f"MCP server {server_name} not found"}
+        
+    server = mcp_servers[server_name]
+    server_url = server["url"]
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Use the /execute endpoint
+            response = await client.post(
+                f"{server_url}/execute",
+                json={
+                    "tool_name": tool_name,
+                    "parameters": parameters,
+                    "context": {}  # Add context if needed
+                }
+            )
+            
+            if response.status_code != 200:
+                logger.error(f"Failed to execute tool {tool_name} on {server_name}: {response.status_code}")
+                return {"error": f"Failed to execute tool: {response.text}"}
+                
+            result = response.json()
+            
+            # Check for error in result
+            if result.get("error"):
+                logger.error(f"Error executing tool {tool_name}: {result['error']}")
+                return {"error": result["error"]}
+                
+            return result.get("result", result)
+    except Exception as e:
+        logger.error(f"Error executing tool {tool_name} on {server_name}: {e}")
+        return {"error": f"Error executing tool: {str(e)}"}
 
 
 # ===== Authentication Module =====
@@ -126,9 +267,9 @@ async def get_oauth_token() -> str:
         return oauth_token
 
     try:
-        oauth_endpoint = config.LLM_OAUTH_ENDPOINT
-        client_id = config.LLM_OAUTH_CLIENT_ID
-        client_secret = config.LLM_OAUTH_CLIENT_SECRET
+        oauth_endpoint = getattr(config, "LLM_OAUTH_ENDPOINT", "")
+        client_id = getattr(config, "LLM_OAUTH_CLIENT_ID", "")
+        client_secret = getattr(config, "LLM_OAUTH_CLIENT_SECRET", "")
 
         if not all([oauth_endpoint, client_id, client_secret]):
             # If OAuth is not configured, return empty string
@@ -142,10 +283,10 @@ async def get_oauth_token() -> str:
             response = await client.post(
                 oauth_endpoint,
                 data={
-                    "grant_type": config.LLM_OAUTH_GRANT_TYPE or "client_credentials",
+                    "grant_type": getattr(config, "LLM_OAUTH_GRANT_TYPE", "client_credentials"),
                     "client_id": client_id,
                     "client_secret": client_secret,
-                    "scope": config.LLM_OAUTH_SCOPE or "read"
+                    "scope": getattr(config, "LLM_OAUTH_SCOPE", "read")
                 },
                 headers={"Content-Type": "application/x-www-form-urlencoded"}
             )
@@ -204,7 +345,7 @@ async def call_llm(messages: List[Dict[str, str]], params: Dict[str, Any] = None
 
         # Prepare full request payload
         request_body = {
-            "model": params.get("model", config.LLM_MODEL),
+            "model": params.get("model", getattr(config, "LLM_MODEL", "gpt-3.5-turbo")),
             "messages": messages,
             "temperature": params.get("temperature", 0.7),
             "stream": False,  # Always use non-streaming mode
@@ -219,14 +360,14 @@ async def call_llm(messages: List[Dict[str, str]], params: Dict[str, Any] = None
             request_body["tool_choice"] = params["tool_choice"]
 
         # Call the LLM with proper error handling and timeouts
-        logger.info(f"Calling LLM at {config.LLM_BASE_URL}")
+        logger.info(f"Calling LLM at {getattr(config, 'LLM_BASE_URL', 'https://api.openai.com/v1/chat/completions')}")
 
         # Ensure the URL is correctly formed
-        base_url = config.LLM_BASE_URL.rstrip('/')
+        base_url = getattr(config, "LLM_BASE_URL", "https://api.openai.com/v1/chat/completions").rstrip('/')
         url = f"{base_url}"
         logger.info(f"Making request to {url}")
 
-        # Need to disable SSL verification for internal RBC endpoints
+        # Need to disable SSL verification for internal endpoints
         async with httpx.AsyncClient(timeout=60.0, verify=False) as client:
             response = await client.post(
                 url,
@@ -273,12 +414,32 @@ async def format_tools_for_openai(tools: List[Dict[str, Any]]) -> List[Dict[str,
     openai_tools = []
 
     for tool in tools:
+        # Get tool name and description
+        name = tool.get("name", "")
+        description = tool.get("description", "")
+        
+        # Get parameters schema
+        parameters = {}
+        if "parameters" in tool:
+            parameters = tool["parameters"]
+        elif "inputSchema" in tool:
+            parameters = tool["inputSchema"]
+        elif "input_schema" in tool:
+            parameters = tool["input_schema"]
+            
+        # Ensure parameters has the proper structure
+        if not parameters:
+            parameters = {"type": "object", "properties": {}}
+        elif "type" not in parameters:
+            parameters = {"type": "object", "properties": parameters}
+            
+        # Create OpenAI tool format
         openai_tool = {
             "type": "function",
             "function": {
-                "name": tool["name"],
-                "description": tool["description"],
-                "parameters": tool["input_schema"],
+                "name": name,
+                "description": description,
+                "parameters": parameters,
             },
         }
         openai_tools.append(openai_tool)
@@ -286,147 +447,90 @@ async def format_tools_for_openai(tools: List[Dict[str, Any]]) -> List[Dict[str,
     return openai_tools
 
 
-def format_calltoolresult_content(result):
-    """Extract text content from a CallToolResult object"""
-    text_contents = []
-
-    if isinstance(result, CallToolResult):
-        for content_item in result.content:
-            # Extract text from TextContent type items
-            if isinstance(content_item, TextContent):
-                text_contents.append(content_item.text)
-
-    if text_contents:
-        return "\n".join(text_contents)
-    return str(result)
-
-
-# ===== Response Handling Module =====
-async def process_llm_response(result: Union[Dict[str, Any], str], initial_msg: cl.Message,
-                               message_history: List[Dict[str, Any]],
-                               memory: Optional[Any] = None) -> List[Dict[str, Any]]:
+def format_table_output(result: str) -> str:
     """
-    Process the LLM response and update UI
+    Format table outputs for better display in Chainlit
+    
+    This function detects and formats markdown tables in the result
     """
-    # Handle error response (string)
-    if isinstance(result, str):
-        initial_msg.content = result
-        await initial_msg.update()
-        return message_history
-
-    logger.info(f"Processing LLM response")
-
-    # Process the response
-    if "choices" in result and result["choices"]:
-        choice = result["choices"][0]
-
-        if "message" in choice:
-            message_obj = choice["message"]
-
-            # Handle regular text response
-            if "content" in message_obj and message_obj["content"]:
-                content = message_obj["content"]
-
-                # Log content length for debugging
-                logger.info(f"Received content of length: {len(content)}")
-
-                # Create a new message instead of updating (helps with display issues)
-                await initial_msg.remove()
-
-                new_msg = cl.Message(content=content)
-                await new_msg.send()
-
-                # Add to message history
-                message_history.append({"role": "assistant", "content": content})
-
-                # Store in memory if available
-                if memory:
-                    await memory.add_message("assistant", content)
-
-            # Handle tool calls
-            if "tool_calls" in message_obj and message_obj["tool_calls"]:
-                await process_tool_calls(
-                    message_obj["tool_calls"],
-                    message_history,
-                    memory
-                )
-        else:
-            logger.warning("Response did not contain a 'message' field")
-            initial_msg.content = "Received an unexpected response from the model."
-            await initial_msg.update()
-    else:
-        logger.warning(f"Unexpected response format: {result}")
-        initial_msg.content = "Received an unexpected response format from the model."
-        await initial_msg.update()
-
-    return message_history
+    # Check if result contains a markdown table
+    if "| " in result and " |" in result:
+        try:
+            # Try to extract and format the table
+            table_pattern = r"(\|[^\n]+\|\n\|[-:| ]+\|\n(?:\|[^\n]+\|\n)+)"
+            tables = re.findall(table_pattern, result)
+            
+            if tables:
+                formatted_result = result
+                for table in tables:
+                    # Convert the markdown table to HTML for better display
+                    try:
+                        # Parse the markdown table
+                        lines = table.strip().split('\n')
+                        header_line = lines[0]
+                        separator_line = lines[1]
+                        data_lines = lines[2:]
+                        
+                        # Extract headers
+                        headers = [h.strip() for h in header_line.split('|') if h.strip()]
+                        
+                        # Create a list of dictionaries for the data
+                        data = []
+                        for line in data_lines:
+                            values = [v.strip() for v in line.split('|') if v.strip()]
+                            if len(values) == len(headers):
+                                data.append(dict(zip(headers, values)))
+                        
+                        # Create DataFrame and convert to HTML
+                        df = pd.DataFrame(data)
+                        html_table = df.to_html(index=False, classes=["table", "table-striped"])
+                        
+                        # Replace the markdown table with HTML
+                        formatted_result = formatted_result.replace(table, f"\n{html_table}\n")
+                    except Exception as e:
+                        logger.error(f"Error formatting table: {e}")
+                        # If formatting fails, keep the original table
+                
+                return formatted_result
+        except Exception as e:
+            logger.error(f"Error processing tables: {e}")
+    
+    # If no tables found or formatting failed, return the original result
+    return result
 
 
-async def process_tool_calls(tool_calls, message_history, memory=None):
-    """
-    Process tool calls from the LLM response
-    """
-    # Add assistant message with tool calls to history
-    message_history.append({
-        "role": "assistant",
-        "content": None,
-        "tool_calls": tool_calls
-    })
-
-    # Process each tool call
-    for tool_call in tool_calls:
-        if tool_call["type"] == "function":
-            function = tool_call["function"]
-            tool_name = function["name"]
-            tool_args = json.loads(function["arguments"])
-
-            # Execute the tool
-            with cl.Step(name=f"Executing tool: {tool_name}", type="tool"):
-                tool_result = await execute_tool(tool_name, tool_args)
-
-            # Display tool result
-            tool_result_content = format_calltoolresult_content(tool_result)
-            tool_result_msg = cl.Message(
-                content=f"Tool Result from {tool_name}:\n{tool_result_content}",
-                author="Tool"
-            )
-            await tool_result_msg.send()
-
-            # Add tool result to message history
-            message_history.append({
-                "role": "tool",
-                "tool_call_id": tool_call["id"],
-                "content": tool_result_content
-            })
-
-    # Get a follow-up response after tool execution
-    follow_up_result = await call_llm(message_history, settings)
-
-    if isinstance(follow_up_result, str):
-        # Error response
-        await cl.Message(content=follow_up_result).send()
-    else:
-        # Process follow-up response
-        follow_up_choice = follow_up_result["choices"][0]
-        follow_up_message = follow_up_choice.get("message", {})
-        follow_up_content = follow_up_message.get("content", "")
-
-        if follow_up_content:
-            follow_up_msg = cl.Message(content=follow_up_content)
-            await follow_up_msg.send()
-
-            # Add to message history
-            message_history.append({"role": "assistant", "content": follow_up_content})
-
-            # Store in memory if available
-            if memory:
-                await memory.add_message("assistant", follow_up_content)
+def format_tool_result(result: Any) -> str:
+    """Format tool result for display"""
+    if isinstance(result, dict):
+        # Check for error
+        if "error" in result:
+            return f"Error: {result['error']}"
+            
+        # Check for structured output
+        if "output" in result:
+            result = result["output"]
+            
+    # Convert to string if not already
+    if not isinstance(result, str):
+        try:
+            # Try to format as JSON
+            if isinstance(result, (dict, list)):
+                result = json.dumps(result, indent=2)
+            else:
+                result = str(result)
+        except Exception:
+            result = str(result)
+            
+    # Format tables if present
+    result = format_table_output(result)
+    
+    return result
 
 
 # ===== Chainlit Event Handlers =====
 @cl.on_chat_start
 async def start():
-    """Initialize chat session and MCP connection"""
+    """Initialize chat session"""
     session_id = f"chat_{int(time.time())}"
 
     # Initialize message history
@@ -462,13 +566,45 @@ async def start():
         else:
             logger.warning("No authentication method available for LLM API")
 
+    # Try to connect to default MCP server
+    default_mcp_url = getattr(config, "MCP_SERVER_URL", "http://localhost:8080")
+    connected = await connect_to_mcp_server(default_mcp_url, "default")
+    
+    if connected:
+        await cl.Message(
+            content=f"Connected to MCP server at {default_mcp_url}"
+        ).send()
+    else:
+        await cl.Message(
+            content=f"Failed to connect to MCP server at {default_mcp_url}. Please connect manually."
+        ).send()
+
     # Send welcome message
+    model_name = getattr(config, "LLM_MODEL", "gpt-3.5-turbo")
     await cl.Message(
-        content=f"Welcome! I'm using {config.LLM_MODEL} with MCP integration. Here's what I can help you with:\n\n"
+        content=f"Welcome! I'm using {model_name} with MCP integration. Here's what I can help you with:\n\n"
                 "1. Chat and answer questions\n"
                 "2. Access tools and execute commands\n"
-                "3. Process financial data and documents"
+                "3. Process financial data and documents\n\n"
+                "You can connect to an MCP server using the 'Connect MCP' button below."
     ).send()
+
+    # Add connect button
+    await cl.Message(content="").send(
+        actions=[
+            cl.Action(
+                name="connect_mcp",
+                label="Connect MCP",
+                description="Connect to an MCP server",
+                value={"default_url": default_mcp_url}
+            ),
+            cl.Action(
+                name="clear_chat",
+                label="Clear Chat",
+                description="Clear the chat history"
+            )
+        ]
+    )
 
     # Log interaction
     log_interaction(
@@ -479,51 +615,90 @@ async def start():
     )
 
 
-@cl.on_mcp_connect
-async def on_mcp_connect(connection, session: ClientSession):
-    """Handle successful MCP server connection"""
-    await cl.Message(f"Connected to MCP server: {connection.name}").send()
-
-    try:
-        # Get list of available tools
-        result = await session.list_tools()
-
-        # Format tools for storage
-        tools = [
-            {
-                "name": t.name,
-                "description": t.description,
-                "input_schema": t.inputSchema,
-            }
-            for t in result.tools
-        ]
-
-        # Cache tools both globally and in session
-        mcp_tools_cache[connection.name] = tools
-        mcp_tools = cl.user_session.get("mcp_tools", {})
-        mcp_tools[connection.name] = tools
-        cl.user_session.set("mcp_tools", mcp_tools)
-
+@cl.action_callback("connect_mcp")
+async def on_connect_mcp(action):
+    """Handle MCP server connection action"""
+    # Get the default URL from the action value
+    default_url = "http://localhost:8080"
+    if action.value and "default_url" in action.value:
+        default_url = action.value["default_url"]
+        
+    # Show input form
+    res = await cl.AskUserMessage(
+        content="Enter the URL of the MCP server you want to connect to:",
+        content_format="markdown",
+        default=default_url
+    ).send()
+    
+    if not res:
+        await cl.Message("Connection cancelled").send()
+        return
+        
+    server_url = res.strip()
+    
+    # Show server name input
+    name_res = await cl.AskUserMessage(
+        content="Enter a name for this MCP server connection:",
+        content_format="markdown",
+        default=f"mcp-{len(mcp_servers) + 1}"
+    ).send()
+    
+    if not name_res:
+        server_name = f"mcp-{len(mcp_servers) + 1}"
+    else:
+        server_name = name_res.strip()
+    
+    # Show connecting message
+    connecting_msg = cl.Message(content=f"Connecting to MCP server at {server_url}...")
+    await connecting_msg.send()
+    
+    # Try to connect
+    connected = await connect_to_mcp_server(server_url, server_name)
+    
+    if connected:
+        connecting_msg.content = f"✅ Connected to MCP server '{server_name}' at {server_url}"
+        await connecting_msg.update()
+        
+        # Get tools count
+        tools_count = len(mcp_tools_cache.get(server_name, []))
+        
         await cl.Message(
-            f"Found {len(tools)} tools from {connection.name} MCP server."
+            content=f"Found {tools_count} tools from '{server_name}' MCP server."
         ).send()
+    else:
+        connecting_msg.content = f"❌ Failed to connect to MCP server at {server_url}"
+        await connecting_msg.update()
+
+
+@cl.action_callback("clear_chat")
+async def on_clear_chat(action):
+    """Clear chat history"""
+    session_id = cl.user_session.get("session_id")
+    try:
+        # Clear message history
+        cl.user_session.set("message_history", [
+            {
+                "role": "system",
+                "content": "You are a helpful AI assistant powered by the MCP server. You can access tools and resources through the MCP integration."
+            }
+        ])
+
+        if MEMORY_AVAILABLE:
+            memory = cl.user_session.get("memory")
+            if memory:
+                await memory.clear()
+
+        log_interaction(
+            step="clear_chat",
+            message="Chat history cleared",
+            session_id=session_id,
+            status="success"
+        )
+
+        await cl.Message(content="Chat history cleared").send()
     except Exception as e:
-        logger.error(f"MCP connection error: {e}")
-        await cl.Message(f"Error listing tools from MCP server: {str(e)}").send()
-
-
-@cl.on_mcp_disconnect
-async def on_mcp_disconnect(name: str, session: ClientSession):
-    """Handle MCP server disconnection"""
-    if name in mcp_tools_cache:
-        del mcp_tools_cache[name]
-
-    mcp_tools = cl.user_session.get("mcp_tools", {})
-    if name in mcp_tools:
-        del mcp_tools[name]
-        cl.user_session.set("mcp_tools", mcp_tools)
-
-    await cl.Message(f"Disconnected from MCP server: {name}").send()
+        log_error("clear_chat", e, session_id)
+        await cl.Message(content=f"Error clearing chat: {str(e)}").send()
 
 
 @cl.step(type="tool")
@@ -533,24 +708,22 @@ async def execute_tool(tool_name: str, tool_input: Dict[str, Any]):
     logger.info(f"Tool input: {tool_input}")
 
     # Find which MCP server has this tool
-    mcp_name = None
-    mcp_tools = cl.user_session.get("mcp_tools", {})
-
-    for conn_name, tools in mcp_tools.items():
+    server_name = None
+    for name, tools in mcp_tools_cache.items():
         if any(tool["name"] == tool_name for tool in tools):
-            mcp_name = conn_name
+            server_name = name
             break
 
-    if not mcp_name:
+    if not server_name:
         return {"error": f"Tool '{tool_name}' not found in any connected MCP server"}
 
-    # Get the session for this MCP server
-    mcp_session, _ = cl.context.session.mcp_sessions.get(mcp_name)
-
     try:
-        # Call the tool with the provided input
-        result = await mcp_session.call_tool(tool_name, tool_input)
-        return result
+        # Execute the tool on the server
+        result = await execute_tool_on_server(server_name, tool_name, tool_input)
+        
+        # Format the result
+        formatted_result = format_tool_result(result)
+        return formatted_result
     except Exception as e:
         logger.error(f"Tool execution error: {e}")
         return {"error": f"Error calling tool '{tool_name}': {str(e)}"}
@@ -587,10 +760,9 @@ async def on_message(message: cl.Message):
         await initial_msg.send()
 
         # Get all available tools from connected MCP servers
-        mcp_tools = cl.user_session.get("mcp_tools", {})
         all_tools = []
-        for connection_tools in mcp_tools.values():
-            all_tools.extend(connection_tools)
+        for server_name, tools in mcp_tools_cache.items():
+            all_tools.extend(tools)
 
         # Prepare parameters for chat completion
         chat_params = {**settings}  # Use default settings which has stream=False
@@ -623,7 +795,10 @@ async def on_message(message: cl.Message):
                     # Handle regular text response
                     if "content" in message_obj and message_obj["content"]:
                         initial_response = message_obj["content"]
-                        initial_msg.content = initial_response
+                        
+                        # Format tables in the response
+                        formatted_response = format_table_output(initial_response)
+                        initial_msg.content = formatted_response
                         await initial_msg.update()
 
                         # Add to message history
@@ -661,9 +836,9 @@ async def on_message(message: cl.Message):
                                         tool_result = await execute_tool(tool_name, tool_args)
 
                                     # Format and display the tool result
-                                    tool_result_content = format_calltoolresult_content(tool_result)
+                                    formatted_result = format_tool_result(tool_result)
                                     tool_result_msg = cl.Message(
-                                        content=f"Tool Result from {tool_name}:\n{tool_result_content}",
+                                        content=f"Tool Result from {tool_name}:\n{formatted_result}",
                                         author="Tool"
                                     )
                                     await tool_result_msg.send()
@@ -672,7 +847,7 @@ async def on_message(message: cl.Message):
                                     message_history.append({
                                         "role": "tool",
                                         "tool_call_id": tool_call["id"],
-                                        "content": tool_result_content
+                                        "content": str(tool_result)
                                     })
 
                                 except Exception as e:
@@ -695,7 +870,9 @@ async def on_message(message: cl.Message):
                                         follow_up_text = choice["message"]["content"]
 
                                 if follow_up_text:
-                                    follow_up_msg = cl.Message(content=follow_up_text)
+                                    # Format tables in the response
+                                    formatted_follow_up = format_table_output(follow_up_text)
+                                    follow_up_msg = cl.Message(content=formatted_follow_up)
                                     await follow_up_msg.send()
 
                                     # Add to message history
@@ -748,50 +925,6 @@ async def on_message(message: cl.Message):
         )
         await cl.Message(content=troubleshooting).send()
 
-@cl.on_stop
-async def on_stop():
-    """Clean up resources when the chat session ends"""
-    global oauth_token, oauth_token_expiry
-
-    # Log that we're stopping
-    logger.info("Chat session ending")
-
-    # Clear token cache
-    oauth_token = None
-    oauth_token_expiry = 0
-
-
-@cl.action_callback("clear_chat")
-async def on_clear_chat(action):
-    """Clear chat history"""
-    session_id = cl.user_session.get("session_id")
-    try:
-        # Clear message history
-        cl.user_session.set("message_history", [
-            {
-                "role": "system",
-                "content": "You are a helpful AI assistant powered by the MCP server. You can access tools and resources through the MCP integration."
-            }
-        ])
-
-        if MEMORY_AVAILABLE:
-            memory = cl.user_session.get("memory")
-            if memory:
-                await memory.clear()
-
-        log_interaction(
-            step="clear_chat",
-            message="Chat history cleared",
-            session_id=session_id,
-            status="success"
-        )
-
-        await cl.Message(content="Chat history cleared").send()
-    except Exception as e:
-        log_error("clear_chat", e, session_id)
-        await cl.Message(content=f"Error clearing chat: {str(e)}").send()
-
 
 if __name__ == "__main__":
     logger.info("Starting Chainlit app with MCP integration...")
-
