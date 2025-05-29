@@ -202,7 +202,9 @@ class LangChainBridge(MCPBridge):
                 
             # Create a better prompt template for the agent
             system_prompt = """You are an expert assistant that helps users by using tools when needed. 
-            You have access to various tools that can help answer questions about clients, financial data, and analytics.
+            You have access to the following tools:
+            
+            {tools}
             
             When a user asks a question, analyze it carefully to determine if you need to use tools to answer it.
             If multiple tools are needed, use them in sequence to build a complete answer.
@@ -228,6 +230,7 @@ class LangChainBridge(MCPBridge):
             agent = (
                 {
                     "input": lambda x: x["input"],
+                    "tools": lambda x: [tool.name + ": " + tool.description for tool in tools],  # Add tools info
                     "agent_scratchpad": lambda x: self._format_to_openai_function_messages(x["intermediate_steps"])
                 }
                 | prompt
