@@ -39,6 +39,8 @@ COPY ui/ ./ui/
 COPY run.py .
 COPY requirements.txt .
 COPY artifacts/ ./artifacts/
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Install dependencies
 RUN pip install --upgrade pip --timeout 60
@@ -91,4 +93,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:8000/api/v1/health || exit 1
 
 # Start application
-CMD ["python", "run.py"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
