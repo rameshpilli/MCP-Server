@@ -1,65 +1,94 @@
-# Use official slim image for a smaller production footprint
 FROM python:3.11-slim
+USER root
 
-# Set non-interactive mode for apt
-ENV DEBIAN_FRONTEND=noninteractive
-
-# Install Node.js, npm, and other dependencies
+# Install Node.js and npm for MCP Inspector
 RUN apt-get update && apt-get install -y \
     curl \
     gnupg \
-    build-essential \
-    && curl -sL https://deb.nodesource.com/setup_18.x | bash - \
+    && curl -sL http://deb.nodesource.com/setup_18.x | bash - \
     && apt-get install -y nodejs \
     && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
 
-# Set up working directory
-WORKDIR /usr/src/mcp-server
+# Install MCP Inspector globally
+RUN npm install -g @modelcontextprotocol/inspector
 
-# Copy entrypoint script first and make it executable
-COPY docker-entrypoint.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# Copy application files
-COPY . .
+# Configure pip to artifact repository
+COPY artifacts/pip.conf /pip.conf
+ENV PIP_CONFIG_FILE /pip.conf
 
-# Install Python dependencies
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -e . && \
-    pip install --no-cache-dir pandas>=2.0.0 && \
-    pip install --no-cache-dir -r requirements-extra.txt
 
-# Install npm dependencies
-RUN npm install
+# Update certificate trust stores
+RUN if command -v update-ca-certificates > /dev/null; then \
+        update-ca-certificates; \
+    elif command -v update-ca-trust > /dev/null; then \
+        update-ca-trust; \
+    else \
+        echo "Warning: Neither update-ca-certificates nor update-ca-trust is available"; \
+    fi
 
-# Create necessary directories
-RUN mkdir -p logs output && \
-    chmod -R 755 logs output
+# Set up application directory
+WORKDIR /usr/src/elements-ai-server
 
-# Set environment variables
-ENV IN_KUBERNETES="true" \
-    LOG_TO_STDOUT="true" \
-    MCP_SERVER_HOST="0.0.0.0" \
-    MCP_SERVER_PORT="8080" \
-    SERVER_MODE="http" \
-    ENABLE_UI="false" \
-    UI_PORT="8081" \
-    USE_MOCK_DATA="false" \
-    LOG_LEVEL="INFO" \
-    ENVIRONMENT="production" \
-    SERVER_NAME="MCP Server" \
-    SERVER_DESCRIPTION="Model Context Protocol Server"
+# Copy application code
+COPY app/ ./app/
+COPY docs/ ./docs/
+COPY tests/ ./tests/
+COPY ui/ ./ui/
+COPY run.py .
+COPY requirements.txt .
+COPY artifacts/ ./artifacts/
 
-# Expose ports for API, UI, and mock data server
-EXPOSE 8080 8081 8001
+# Install dependencies
+RUN pip install --upgrade pip --timeout 60
 
-# Add healthcheck using the correct port
+
+
+# Install compass_sdk from local directory if present
+RUN if [ -d "./artifacts/compass-sdk" ]; then \
+        pip install --no-index --find-links=./artifacts/compass-sdk compass_sdk || echo "Failed to install compass_sdk, continuing..."; \
+    fi
+
+# Install packages in batches with retry logic
+# Core functionality
+RUN pip install fastapi uvicorn httpx python-dotenv pydantic --default-timeout=60 || echo "Some core packages failed to install"
+
+# MCP/LLM components
+RUN pip install fastmcp anthropic openai cohere --default-timeout=60 || echo "Some MCP/LLM packages failed to install"
+
+# Cloud storage and document handling
+RUN pip install boto3 markdown beautifulsoup4 PyPDF2 "pdfminer.six" --default-timeout=60 || echo "Some document handling packages failed to install"
+
+# Security and logging
+RUN pip install python-multipart aiohttp --default-timeout=60 || echo "Some security packages failed to install"
+
+# UI (if available)
+RUN pip install chainlit --default-timeout=60 || echo "UI package failed to install"
+
+# Additional packages
+RUN pip install asyncio aiofiles pytest gunicorn prometheus-client tenacity tabulate --default-timeout=60 || echo "Some additional packages failed to install"
+
+# Set environment variables for container
+ENV IN_KUBERNETES="true"
+ENV LOG_TO_STDOUT="true"
+ENV COHERE_MCP_SERVER_HOST="0.0.0.0"
+ENV COHERE_MCP_SERVER_PORT="8001"
+ENV MCP_SERVER_HOST="localhost"
+ENV MCP_SERVER_PORT="8081"
+
+# Expose ports for API, MCP server, and UI
+EXPOSE 8000 8001 8501
+
+# Create and set permissions for logs directory
+RUN mkdir -p /usr/src/elements-ai-server/logs && \
+    chmod -R 755 /usr/src/elements-ai-server/logs
+
+VOLUME ["/usr/src/elements-ai-server/logs"]
+
+# Add healthcheck
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:8080/ping || exit 1
+  CMD curl -f http://localhost:8000/api/v1/health || exit 1
 
-# Volume for logs and output
-VOLUME ["/usr/src/mcp-server/logs", "/usr/src/mcp-server/output"]
-
-# Use entrypoint script to handle different run modes
-ENTRYPOINT ["docker-entrypoint.sh"]
+# Start application
+CMD ["python", "run.py"]
