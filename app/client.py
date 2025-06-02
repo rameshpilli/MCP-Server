@@ -1,4 +1,38 @@
 # app/client.py
+"""
+MCP Client:
+    - Acts as the interface between the user input (via UI or SDK) and the MCP Server
+    - Handles dynamic tool execution, context fetching, and output formatting
+
+1. Responsibilities:
+    - Discover MCP server's live port (for local or Kubernetes-based deployments)
+    - Use MCPBridge to route incoming user messages to relevant tools
+    - If required, augment queries with relevant context from Compass
+    - Execute tools, handle retries, collect results
+    - Optionally format/combine results via LLM to produce a final user-facing response
+
+2. LLM Integration:
+    - Uses OAuth-secured or API-key-based OpenAI-compatible LLM endpoints
+    - Sends user message + context + results to LLM for natural language response generation
+
+3. Execution Flow:
+    - UI sends a user query to MCP Client
+    - MCPClient.process_message() is called
+        - Discovers available MCP tools
+        - Gets context (from Compass) and routing (from MCPBridge)
+        - Executes each tool (with retry logic)
+        - Combines results, optionally via LLM
+        - Returns response + metadata
+
+4. Resilience:
+    - Handles retries for tool execution
+    - Uses caching to minimize redundant port discovery
+    - Graceful fallback if LLM or context tools fail
+
+Usage:
+    - This client can be used from both CLI or UI backends
+    - Particularly useful for Chainlit apps or FastAPI-based host platforms
+"""
 import os
 import httpx
 import time
@@ -9,7 +43,9 @@ from typing import Optional, Union
 from typing import Optional, Dict, Any, List
 from .config import config
 from .utils.logger import log_interaction, log_error
-from .mcp_bridge import MCPBridge
+# from .mcp_bridge import MCPBridge
+from .langchain_bridge import  LangChainBridge
+
 from fastmcp import Context
 import logging
 logger = logging.getLogger(__name__)
@@ -112,7 +148,6 @@ class MCPClient:
         logger.warning("Could not find a running MCP server")
         return None
 
-
     async def call_llm(self, messages: List[Dict[str, str]], params: Dict[str, Any] = None) -> Union[
         Dict[str, Any], str]:
         """
@@ -126,11 +161,12 @@ class MCPClient:
         Returns:
             The raw JSON response from the LLM or error string
         """
+        print("CALL_LLM START - TEMPERATURE DEBUG..")
+        logger.error("CALL_LLM START - TEMPERATURE DEBUG .. ")
 
         logger.info("call_llm called")
         if params is None:
             params = {}
-
         try:
             # Get OAuth token first (if configured)
             token = await self._get_oauth_token()
@@ -157,12 +193,22 @@ class MCPClient:
                 "stream": params.get("stream", False)
             }
 
+            # Debug logging to trace temperature issue
+            logger.info(f"LLM_SUPPORTS_TEMPERATURE config: {getattr(config, 'LLM_SUPPORTS_TEMPERATURE', False)}")
+            logger.info(f"Temperature in params: {params.get('temperature') if params else 'No params'}")
+
+            print(f"LLM_SUPPORTS_TEMPERATURE config: {getattr(config, 'LLM_SUPPORTS_TEMPERATURE', False)}")
+            print(f"TEMPERATURE in params: {params.get('temperature') if params else 'No params'}")
+
             # Conditionally include optional params
             if getattr(config, 'LLM_SUPPORTS_MAX_TOKENS', True):
                 request_body["max_tokens"] = params.get("max_tokens", 4000)
 
             if getattr(config, 'LLM_SUPPORTS_TEMPERATURE', False):
                 request_body["temperature"] = params.get("temperature", 0.7)
+                logger.info(f"Added temperature to request: {request_body['temperature']}")
+            else:
+                logger.info("Temperature NOT added to request (config disabled)")
 
             if getattr(config, 'LLM_SUPPORTS_TOP_P', False):
                 request_body["top_p"] = params.get("top_p", 1.0)
@@ -178,6 +224,14 @@ class MCPClient:
 
             if "tool_choice" in params:
                 request_body["tool_choice"] = params["tool_choice"]
+
+            # Debug: Log the final request body structure
+            logger.info(f"Final request body keys: {list(request_body.keys())}")
+            if "temperature" in request_body:
+                print(f" TEMPERATURE FOUND IN REQUEST: {request_body['temperature']}")
+                logger.error(f"🚨 TEMPERATURE FOUND IN REQUEST: {request_body['temperature']}")
+            else:
+                print("NO TEMPERATURE IN REQUEST")
 
             base_url = config.LLM_BASE_URL.rstrip('/')
             url = f"{base_url}"
@@ -211,7 +265,6 @@ class MCPClient:
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
             return f"LLM call failed: {str(e)}"
-
 
     async def process_message(self, message: str, session_id: Optional[str] = None) -> Dict[str, Any]:
         """
